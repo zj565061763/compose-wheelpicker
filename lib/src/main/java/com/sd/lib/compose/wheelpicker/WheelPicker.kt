@@ -141,10 +141,7 @@ private fun WheelPicker(
   val density = LocalDensity.current
   val layoutDirection = LocalLayoutDirection.current
   val itemSizePx = remember(density, itemSize) {
-    with(density) { itemSize.roundToPx() }.coerceAtLeast(1)
-  }
-  val itemSizeDp = remember(density, itemSizePx) {
-    with(density) { itemSizePx.toDp() }
+    resolveWheelItemSizePx(density = density, itemSize = itemSize)
   }
   val viewportState = remember(orientation) {
     WheelViewportState(
@@ -218,11 +215,13 @@ private fun WheelPicker(
       }
     }
   }
+  val itemModifier = remember(orientation, itemSizePx) {
+    Modifier.itemMainAxisSize(orientation = orientation, sizePx = itemSizePx)
+  }
   val lazyListContent: LazyListScope.() -> Unit = remember(
     count,
     safeLazyKey,
-    orientation,
-    itemSizeDp,
+    itemModifier,
     displayHolder,
   ) {
     {
@@ -232,7 +231,7 @@ private fun WheelPicker(
           key = safeLazyKey,
         ) { index ->
           Box(
-            modifier = Modifier.itemMainAxisSize(orientation = orientation, size = itemSizeDp),
+            modifier = itemModifier,
             contentAlignment = Alignment.Center,
           ) {
             displayHolder.Display(index)

@@ -34,7 +34,11 @@ internal class WheelSnapObserver(
                   val removed = activeDrags.remove(interaction.start)
                   stoppedLastDrag = removed && activeDrags.isEmpty()
                 }
-                is DragInteraction.Cancel -> activeDrags.remove(interaction.start)
+                is DragInteraction.Cancel -> {
+                  // 触摸取消后 Compose 仍会发起零速度 fling 交接，滚动仍启用时同样进入离手保护
+                  val removed = activeDrags.remove(interaction.start)
+                  stoppedLastDrag = removed && activeDrags.isEmpty()
+                }
               }
               if (stoppedLastDrag) {
                 store.onDragStoppedAwaitingFling(owner)

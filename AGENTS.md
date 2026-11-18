@@ -57,11 +57,11 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 修改 `:lib` 时必须保持以下不变量：
 
 - 参数校验：`count >= 0`、`itemSize` 为大于 `0.dp` 的有限值、`unfocusedCount >= 0`，非法参数立即抛 `IllegalArgumentException`。
-- 主轴自适应与裁剪：主轴尺寸为 `itemSizePx * (safeUnfocusedCount * 2 + 1)`，父容器空间不足时自动缩小 `safeUnfocusedCount`，仍小于子项时启用裁剪。
+- 主轴自适应与裁剪：`itemSizePx` 限制在 `1..262_142`（Compose `Constraints` 单轴上限），主轴尺寸为 `itemSizePx * (safeUnfocusedCount * 2 + 1)`，父容器空间不足时自动缩小 `safeUnfocusedCount`，仍小于子项时启用裁剪。
 - 交叉轴固有尺寸：只查询 `focus` 槽位，严禁查询底层 `LazyList` 节点（会触发 Compose 异常）。
 - 单实例与空态语义：同一个 `WheelPickerState` 同时只能绑定一个滚轮，未挂载或 `count == 0` 时 `currentIndex` 与 `snappedIndex` 均为 `-1`、`scrollPercentageOf` 返回 `null`。
 - 视觉方向符号：RTL 布局下的水平滚轮与 `reverseLayout = true` 需保持 `scrollPercentageOf` 视觉方向符号一致。
-- 离手衔接保护：禁用默认 `overscrollEffect`，松手时通过 `isAwaitingFlingHandoff` 配合 `NestedScrollConnection`（含 60 帧超时兜底）等待嵌套滚动父容器完成 `onPreFling`，不得提前启动自动吸附截停 fling。
+- 离手衔接保护：禁用默认 `overscrollEffect`，松手或触摸取消时通过 `isAwaitingFlingHandoff` 配合 `NestedScrollConnection`（含 60 帧超时兜底）等待嵌套滚动父容器完成 `onPreFling`，不得提前启动自动吸附截停 fling。
 - 静止自动吸附：停止在非零像素偏移时自动归位至最近条目并更新 `snappedIndex`。
 - 预跳转与无死锁：未挂载、空数据或首次布局前调用 `scrollToIndex` / `animateScrollToIndex` 不得挂起死锁，待后续非空挂载时限制在 `0..<count` 内生效。
 - 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时立即夹紧至 `count - 1`，原中间项变为新末项且残留正偏移时将偏移归零。
@@ -89,4 +89,4 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 | 测试类 | 覆盖范围 |
 |---|---|
 | `WheelPickerTest` | `unfocusedCount` 防溢出收缩、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与末项残余偏移归零、常规 `key` 增删重排同步 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与重挂载跳转 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动与触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与重挂载跳转 |

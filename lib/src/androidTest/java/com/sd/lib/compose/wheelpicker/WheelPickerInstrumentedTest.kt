@@ -2,6 +2,7 @@ package com.sd.lib.compose.wheelpicker
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -26,17 +27,20 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,7 +62,11 @@ class WheelPickerInstrumentedTest {
     var horizontalMeasuredSize = IntSize.Zero
     var expectedMainAxisPx = 0
     var expectedCrossAxisPx = 0
+    var hugeItemMeasuredHeight = 0
+    var hugeFocusMeasuredHeight = 0
     val tightState = WheelPickerState(initialIndex = 2)
+    val hugeVerticalState = WheelPickerState(initialIndex = 0)
+    val hugeHorizontalState = WheelPickerState(initialIndex = 0)
 
     composeRule.setContent {
       val density = LocalDensity.current
@@ -116,6 +124,54 @@ class WheelPickerInstrumentedTest {
           BasicText(text = "T-$index")
         }
       }
+
+      CompositionLocalProvider(LocalDensity provides Density(1f)) {
+        Box(modifier = Modifier.size(width = 120.dp, height = 160.dp)) {
+          VerticalWheelPicker(
+            count = 3,
+            state = hugeVerticalState,
+            itemHeight = 400_000.dp,
+            unfocusedCount = 2,
+            focus = {
+              Box(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .onSizeChanged { hugeFocusMeasuredHeight = it.height },
+              )
+            },
+          ) { index ->
+            Box(
+              modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged {
+                  if (index == 0) {
+                    hugeItemMeasuredHeight = it.height
+                  }
+                },
+            ) {
+              BasicText(text = "HV-$index")
+            }
+          }
+        }
+
+        Box(
+          modifier = Modifier
+            .width(IntrinsicSize.Max)
+            .height(IntrinsicSize.Min),
+        ) {
+          HorizontalWheelPicker(
+            count = 1,
+            state = hugeHorizontalState,
+            itemWidth = 400_000.dp,
+            unfocusedCount = 2,
+            focus = {
+              Box(modifier = Modifier.height(48.dp))
+            },
+          ) { index ->
+            BasicText(text = "HH-$index")
+          }
+        }
+      }
     }
 
     composeRule.waitForIdle()
@@ -125,6 +181,13 @@ class WheelPickerInstrumentedTest {
     assertEquals(expectedCrossAxisPx, horizontalMeasuredSize.height)
     assertEquals(2, tightState.snappedIndex)
     assertEquals(0f, tightState.scrollPercentageOf(2))
+    assertEquals(MAX_CONSTRAINT_AXIS_PX, hugeItemMeasuredHeight)
+    assertEquals(MAX_CONSTRAINT_AXIS_PX, hugeFocusMeasuredHeight)
+    assertEquals(0, hugeVerticalState.snappedIndex)
+    assertEquals(0f, hugeVerticalState.scrollPercentageOf(0))
+    assertEquals(1f, hugeVerticalState.scrollPercentageOf(1))
+    assertEquals(0, hugeHorizontalState.snappedIndex)
+    assertEquals(0f, hugeHorizontalState.scrollPercentageOf(0))
   }
 
   @OptIn(ExperimentalMaterial3Api::class)
@@ -132,20 +195,29 @@ class WheelPickerInstrumentedTest {
   fun testModalBottomSheetAndMultiFrameOnPreFlingNestedScrollSafety() {
     val state = WheelPickerState(initialIndex = 20)
     var preFlingInvoked = false
-    var wheelMovingDuringLastSuspendFrame = false
+    var wheelMovingDuringPreFling = false
+    var itemHeightPx = 0
+    var touchSlopPx = 0f
 
     val multiFramePreFlingConnection = object : NestedScrollConnection {
       override suspend fun onPreFling(available: Velocity): Velocity {
         preFlingInvoked = true
         repeat(4) {
           withFrameNanos { }
+          if (state.isScrollInProgress) {
+            wheelMovingDuringPreFling = true
+          }
         }
-        wheelMovingDuringLastSuspendFrame = state.isScrollInProgress
         return Velocity.Zero
       }
     }
 
     composeRule.setContent {
+      val density = LocalDensity.current
+      val viewConfiguration = LocalViewConfiguration.current
+      itemHeightPx = with(density) { 40.dp.roundToPx() }
+      touchSlopPx = viewConfiguration.touchSlop
+
       val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
       ModalBottomSheet(
         onDismissRequest = {},
@@ -180,9 +252,34 @@ class WheelPickerInstrumentedTest {
     assertTrue("Expected NestedScrollConnection.onPreFling to be invoked", preFlingInvoked)
     assertFalse(
       "Auto-snap must not start prematurely while onPreFling is still suspended",
-      wheelMovingDuringLastSuspendFrame,
+      wheelMovingDuringPreFling,
     )
     assertTrue("Expected fling to advance past initial index 20, actual=${state.snappedIndex}", state.snappedIndex > 22)
+    assertEquals(state.currentIndex, state.snappedIndex)
+    assertEquals(0f, state.scrollPercentageOf(state.snappedIndex))
+
+    // 拖动至非零偏移后发送触摸取消，父容器多帧 onPreFling 完成前同样不得提前启动自动吸附
+    preFlingInvoked = false
+    wheelMovingDuringPreFling = false
+
+    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
+      down(center)
+      moveBy(Offset(0f, -(touchSlopPx + itemHeightPx * 0.4f)))
+    }
+    composeRule.waitForIdle()
+    val midDragPct = state.scrollPercentageOf(state.currentIndex)!!
+    assertTrue("Expected non-zero scroll offset before touch cancel, actual=$midDragPct", abs(midDragPct) > 0.02f)
+
+    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
+      cancel()
+    }
+    composeRule.waitForIdle()
+
+    assertTrue("Expected NestedScrollConnection.onPreFling to be invoked after touch cancel", preFlingInvoked)
+    assertFalse(
+      "Auto-snap must not start prematurely after touch cancel while onPreFling is still suspended",
+      wheelMovingDuringPreFling,
+    )
     assertEquals(state.currentIndex, state.snappedIndex)
     assertEquals(0f, state.scrollPercentageOf(state.snappedIndex))
   }

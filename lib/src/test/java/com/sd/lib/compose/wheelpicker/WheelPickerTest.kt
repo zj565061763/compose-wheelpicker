@@ -115,6 +115,15 @@ class WheelPickerTest {
     )
     assertTrue(capped > 0)
     assertTrue(48L * (capped.toLong() * 2L + 1L) <= 32_766L)
+
+    // 超大但有限的 itemSize 换算像素时统一限制在 Compose Constraints 单轴上限内
+    assertEquals(1, resolveWheelItemSizePx(density = Density(1f), itemSize = 0.001.dp))
+    assertEquals(96, resolveWheelItemSizePx(density = Density(2f), itemSize = 48.dp))
+    assertEquals(MAX_CONSTRAINT_AXIS_PX, resolveWheelItemSizePx(density = Density(1f), itemSize = 400_000.dp))
+    assertEquals(MAX_CONSTRAINT_AXIS_PX, resolveWheelItemSizePx(density = Density(3f), itemSize = Float.MAX_VALUE.dp))
+    assertEquals(0, calculateSafeUnfocusedCount(maxSizePx = Constraints.Infinity, itemSizePx = MAX_CONSTRAINT_AXIS_PX, unfocusedCount = 2))
+    assertEquals(0, calculateSnappedIndex(0, MAX_CONSTRAINT_AXIS_PX / 2, count = 2, itemSizePx = MAX_CONSTRAINT_AXIS_PX))
+    assertEquals(1, calculateSnappedIndex(0, MAX_CONSTRAINT_AXIS_PX / 2 + 1, count = 2, itemSizePx = MAX_CONSTRAINT_AXIS_PX))
   }
 
   @Test
@@ -634,6 +643,7 @@ class WheelPickerTest {
       }
       val state = WheelPickerState(initialIndex = 0, scrollController = controller)
       val items by mutableStateOf((0..49).toList())
+      var userScrollEnabled by mutableStateOf(false)
 
       val harness = WheelCompositionHarness(
         parentContext = coroutineContext,
@@ -641,7 +651,10 @@ class WheelPickerTest {
         state = state,
       )
       try {
-        harness.composeWheelWithChildParam(itemsProvider = { items })
+        harness.composeWheelWithChildParam(
+          itemsProvider = { items },
+          userScrollEnabledProvider = { userScrollEnabled },
+        )
         harness.stepFrame()
         assertEquals(0, state.snappedIndex)
 
@@ -677,6 +690,47 @@ class WheelPickerTest {
         assertEquals(12, controller.firstVisibleItemIndex)
         assertEquals(0, controller.firstVisibleItemScrollOffset)
         assertEquals(12, state.snappedIndex)
+
+        // 启用离手保护时，拖动以 DragInteraction.Cancel 结束且父容器多帧挂起 onPreFling 期间不提前自动吸附
+        userScrollEnabled = true
+        harness.stepFrame()
+        controller.animateTargetsRequested.clear()
+
+        val cancelDragStart = controller.emitDragStart()
+        controller.beginGestureScroll(index = 15, offset = 20)
+        harness.stepFrame()
+
+        controller.emitDragCancel(cancelDragStart)
+        controller.endGestureScroll()
+        repeat(4) {
+          harness.stepFrame()
+        }
+        assertFalse(state.isScrollInProgress)
+        assertTrue(controller.animateTargetsRequested.isEmpty())
+        assertEquals(20, controller.firstVisibleItemScrollOffset)
+
+        state.onFlingHandoffResolved(checkNotNull(harness.latestOwner))
+        harness.stepFrame()
+        harness.stepFrame()
+        assertEquals(15, controller.firstVisibleItemIndex)
+        assertEquals(0, controller.firstVisibleItemScrollOffset)
+        assertEquals(15, state.snappedIndex)
+
+        // 拖动期间滚动被禁用并发出 DragInteraction.Cancel 时，不卡在 60 帧离手保护，直接完成吸附
+        controller.animateTargetsRequested.clear()
+        val disableDragStart = controller.emitDragStart()
+        controller.beginGestureScroll(index = 18, offset = 30)
+        harness.stepFrame()
+
+        userScrollEnabled = false
+        controller.emitDragCancel(disableDragStart)
+        controller.endGestureScroll()
+        repeat(3) {
+          harness.stepFrame()
+        }
+        assertEquals(19, controller.firstVisibleItemIndex)
+        assertEquals(0, controller.firstVisibleItemScrollOffset)
+        assertEquals(19, state.snappedIndex)
       } finally {
         harness.dispose()
       }
@@ -929,6 +983,9 @@ private class WheelCompositionHarness(
 ) {
   val clock = BroadcastFrameClock()
 
+  var latestOwner: Any? = null
+    private set
+
   private val _recomposer = Recomposer(parentContext + clock)
   private val _scope = CoroutineScope(parentContext + clock)
   private val _recomposeJob = _scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -953,10 +1010,16 @@ private class WheelCompositionHarness(
     }
   }
 
-  fun composeWheelWithChildParam(itemsProvider: () -> List<Int>) {
+  fun composeWheelWithChildParam(
+    itemsProvider: () -> List<Int>,
+    userScrollEnabledProvider: () -> Boolean = { false },
+  ) {
     setRootContent {
       val list = itemsProvider()
-      WheelChildNode(items = list)
+      WheelChildNode(
+        items = list,
+        userScrollEnabled = userScrollEnabledProvider(),
+      )
     }
   }
 
@@ -993,10 +1056,14 @@ private class WheelCompositionHarness(
   }
 
   @Composable
-  private fun WheelChildNode(items: List<Int>) {
+  private fun WheelChildNode(
+    items: List<Int>,
+    userScrollEnabled: Boolean = false,
+  ) {
     WheelAttachmentNode(
       count = items.size,
       key = { items[it] },
+      userScrollEnabled = userScrollEnabled,
     )
   }
 
@@ -1004,6 +1071,7 @@ private class WheelCompositionHarness(
   private fun WheelAttachmentNode(
     count: Int,
     key: ((Int) -> Any)?,
+    userScrollEnabled: Boolean = false,
   ) {
     val owner = remember(state) { Any() }
     rememberWheelPickerDisplayHolder(
@@ -1027,6 +1095,7 @@ private class WheelCompositionHarness(
     val lazyListContentToken = remember(count, safeLazyKey) { Any() }
     rememberUpdatedState(lazyListContentToken)
     SideEffect {
+      latestOwner = owner
       _latestCount = count
       _latestKey = safeLazyKey
       state.updateAttachment(
@@ -1034,6 +1103,7 @@ private class WheelCompositionHarness(
         count = count,
         unfocusedCount = 2,
         itemSizePx = 48,
+        flingGuardEnabled = userScrollEnabled && count > 0,
       )
     }
     DisposableEffect(state, owner) {
@@ -1215,6 +1285,10 @@ private class FakeWheelScrollController(
 
   suspend fun emitDragStop(start: DragInteraction.Start) {
     _interactionSource.emit(DragInteraction.Stop(start))
+  }
+
+  suspend fun emitDragCancel(start: DragInteraction.Start) {
+    _interactionSource.emit(DragInteraction.Cancel(start))
   }
 
   fun resumeActiveAnimation() {
