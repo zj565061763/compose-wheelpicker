@@ -196,15 +196,21 @@ class WheelPickerInstrumentedTest {
     val state = WheelPickerState(initialIndex = 20)
     var preFlingInvoked = false
     var wheelMovingDuringPreFling = false
+    var programmaticJumpTargetDuringPreFling: Int? = null
+    var snappedDuringPreFlingJump = -1
     var itemHeightPx = 0
     var touchSlopPx = 0f
 
     val multiFramePreFlingConnection = object : NestedScrollConnection {
       override suspend fun onPreFling(available: Velocity): Velocity {
         preFlingInvoked = true
-        repeat(4) {
+        val jumpTarget = programmaticJumpTargetDuringPreFling
+        repeat(4) { step ->
           withFrameNanos { }
-          if (state.isScrollInProgress) {
+          if (jumpTarget != null && step == 1) {
+            state.scrollToIndex(jumpTarget)
+            snappedDuringPreFlingJump = state.snappedIndex
+          } else if (jumpTarget == null && state.isScrollInProgress) {
             wheelMovingDuringPreFling = true
           }
         }
@@ -280,6 +286,34 @@ class WheelPickerInstrumentedTest {
       "Auto-snap must not start prematurely after touch cancel while onPreFling is still suspended",
       wheelMovingDuringPreFling,
     )
+    assertEquals(state.currentIndex, state.snappedIndex)
+    assertEquals(0f, state.scrollPercentageOf(state.snappedIndex))
+
+    // 父容器 onPreFling 挂起期间显式 scrollToIndex(60) 完成后，恢复的旧 fling 不得覆盖 60，且后续新手势仍可正常滑动
+    preFlingInvoked = false
+    programmaticJumpTargetDuringPreFling = 60
+
+    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
+      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
+    }
+    composeRule.waitForIdle()
+
+    assertTrue("Expected NestedScrollConnection.onPreFling to be invoked", preFlingInvoked)
+    assertEquals(60, snappedDuringPreFlingJump)
+    assertEquals(60, state.snappedIndex)
+    assertEquals(60, state.currentIndex)
+    assertEquals(0f, state.scrollPercentageOf(60))
+
+    programmaticJumpTargetDuringPreFling = null
+    preFlingInvoked = false
+
+    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
+      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
+    }
+    composeRule.waitForIdle()
+
+    assertTrue("Expected subsequent gesture NestedScrollConnection.onPreFling to be invoked", preFlingInvoked)
+    assertTrue("Expected subsequent fresh fling to advance past 60, actual=${state.snappedIndex}", state.snappedIndex > 62)
     assertEquals(state.currentIndex, state.snappedIndex)
     assertEquals(0f, state.scrollPercentageOf(state.snappedIndex))
   }

@@ -731,6 +731,47 @@ class WheelPickerTest {
         assertEquals(19, controller.firstVisibleItemIndex)
         assertEquals(0, controller.firstVisibleItemScrollOffset)
         assertEquals(19, state.snappedIndex)
+
+        // 父容器 onPreFling 挂起期间显式调用 scrollToIndex 时，使待交接旧 fling 失效且保留后续新手势能力
+        userScrollEnabled = true
+        harness.stepFrame()
+        val owner = checkNotNull(harness.latestOwner)
+
+        val staleFlingDragStart = controller.emitDragStart()
+        controller.beginGestureScroll(index = 22, offset = 16)
+        harness.stepFrame()
+        controller.emitDragStop(staleFlingDragStart)
+        controller.endGestureScroll()
+        harness.stepFrame()
+
+        state.scrollToIndex(35)
+        harness.stepFrame()
+        assertEquals(35, state.snappedIndex)
+        assertTrue(state.onPreFlingHandoff(owner))
+        assertFalse(state.onPreFlingHandoff(owner))
+
+        val interruptedHandoffDragStart = controller.emitDragStart()
+        controller.beginGestureScroll(index = 36, offset = 12)
+        harness.stepFrame()
+        controller.emitDragStop(interruptedHandoffDragStart)
+        controller.endGestureScroll()
+        harness.stepFrame()
+
+        state.scrollToIndex(40)
+        harness.stepFrame()
+        assertEquals(40, state.snappedIndex)
+
+        val freshGestureDragStart = controller.emitDragStart()
+        controller.beginGestureScroll(index = 28, offset = 10)
+        harness.stepFrame()
+        controller.emitDragStop(freshGestureDragStart)
+        controller.endGestureScroll()
+        harness.stepFrame()
+        assertFalse(state.onPreFlingHandoff(owner))
+        state.onFlingHandoffResolved(owner)
+        harness.stepFrame()
+        harness.stepFrame()
+        assertEquals(28, state.snappedIndex)
       } finally {
         harness.dispose()
       }

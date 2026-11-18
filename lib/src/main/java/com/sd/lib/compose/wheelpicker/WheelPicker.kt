@@ -164,8 +164,12 @@ private fun WheelPicker(
   val flingGuardConnection = remember(state, owner) {
     object : NestedScrollConnection {
       override suspend fun onPreFling(available: Velocity): Velocity {
-        state.onFlingHandoffResolved(owner)
-        return Velocity.Zero
+        // 离手等待交接期间若发生显式编程跳转，消费旧手势残余速度避免覆盖新目标
+        return if (state.onPreFlingHandoff(owner)) {
+          available
+        } else {
+          Velocity.Zero
+        }
       }
 
       override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {

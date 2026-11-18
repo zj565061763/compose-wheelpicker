@@ -109,6 +109,10 @@ class WheelPickerState internal constructor(
     )
   }
 
+  internal fun onPreFlingHandoff(owner: Any): Boolean {
+    return _store.onPreFlingHandoff(owner)
+  }
+
   internal fun onFlingHandoffResolved(owner: Any) {
     _store.onFlingHandoffResolved(owner)
   }

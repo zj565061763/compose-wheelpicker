@@ -18,6 +18,7 @@ internal class WheelPositionStore(
 ) {
   private var _observerOwner: Any? = null
   private var _hasFlingGuard = false
+  private var _cancelAwaitingFling = false
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
 
@@ -84,6 +85,7 @@ internal class WheelPositionStore(
       _observerOwner = null
       isDragged = false
       isAwaitingFlingHandoff = false
+      _cancelAwaitingFling = false
     }
   }
 
@@ -94,6 +96,7 @@ internal class WheelPositionStore(
     if (_observerOwner === owner) {
       if (dragged) {
         isAwaitingFlingHandoff = false
+        _cancelAwaitingFling = false
       }
       if (isDragged != dragged) {
         isDragged = dragged
@@ -104,12 +107,33 @@ internal class WheelPositionStore(
   fun onDragStoppedAwaitingFling(owner: Any) {
     if (_observerOwner === owner && _hasFlingGuard) {
       isAwaitingFlingHandoff = true
+      _cancelAwaitingFling = false
     }
   }
 
-  fun onFlingHandoffResolved(owner: Any) {
-    if ((attachment?.owner === owner || _observerOwner === owner) && isAwaitingFlingHandoff) {
+  fun invalidateAwaitingFlingHandoff() {
+    if (isAwaitingFlingHandoff) {
       isAwaitingFlingHandoff = false
+      _cancelAwaitingFling = true
+    }
+  }
+
+  fun onPreFlingHandoff(owner: Any): Boolean {
+    if (attachment?.owner !== owner && _observerOwner !== owner) {
+      return false
+    }
+    isAwaitingFlingHandoff = false
+    if (_cancelAwaitingFling) {
+      _cancelAwaitingFling = false
+      return true
+    }
+    return false
+  }
+
+  fun onFlingHandoffResolved(owner: Any) {
+    if (attachment?.owner === owner || _observerOwner === owner) {
+      isAwaitingFlingHandoff = false
+      _cancelAwaitingFling = false
     }
   }
 
@@ -128,6 +152,7 @@ internal class WheelPositionStore(
     _hasFlingGuard = flingGuardEnabled && count > 0
     if (!_hasFlingGuard) {
       isAwaitingFlingHandoff = false
+      _cancelAwaitingFling = false
     }
 
     if (count <= 0) {
@@ -222,6 +247,7 @@ internal class WheelPositionStore(
     }
     _hasFlingGuard = false
     isAwaitingFlingHandoff = false
+    _cancelAwaitingFling = false
     attachment = null
     snappedIndex = -1
     return true
