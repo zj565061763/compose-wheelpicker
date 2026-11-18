@@ -30,8 +30,11 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
@@ -522,5 +525,54 @@ class WheelPickerInstrumentedTest {
     composeRule.waitForIdle()
     assertTrue(state.currentIndex > 2)
     assertEquals(state.currentIndex, state.snappedIndex)
+  }
+
+  @Test
+  fun testItemSelectedSemanticsUpdatesOnSnap() {
+    val state = WheelPickerState(initialIndex = 2)
+    lateinit var composeScope: CoroutineScope
+
+    composeRule.setContent {
+      composeScope = rememberCoroutineScope()
+      VerticalWheelPicker(
+        modifier = Modifier.testTag("semanticsWheel"),
+        count = 30,
+        state = state,
+        itemHeight = 40.dp,
+        unfocusedCount = 2,
+      ) { index ->
+        BasicText(text = "Option-$index")
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(2, state.snappedIndex)
+    composeRule.onNodeWithText("Option-1").assertIsNotSelected()
+    composeRule.onNodeWithText("Option-2").assertIsSelected()
+    composeRule.onNodeWithText("Option-3").assertIsNotSelected()
+
+    composeRule.runOnUiThread {
+      composeScope.launch {
+        state.animateScrollToIndex(5)
+      }
+    }
+    composeRule.waitForIdle()
+    assertEquals(5, state.snappedIndex)
+    composeRule.onNodeWithText("Option-4").assertIsNotSelected()
+    composeRule.onNodeWithText("Option-5").assertIsSelected()
+    composeRule.onNodeWithText("Option-6").assertIsNotSelected()
+
+    composeRule.onNodeWithTag("semanticsWheel").performTouchInput {
+      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
+    }
+    composeRule.waitForIdle()
+
+    val settled = state.snappedIndex
+    assertTrue("Expected gesture fling to advance past 5, actual=$settled", settled > 5)
+    composeRule.onNodeWithText("Option-${settled - 1}").assertIsNotSelected()
+    composeRule.onNodeWithText("Option-$settled").assertIsSelected()
+    if (settled + 1 < 30) {
+      composeRule.onNodeWithText("Option-${settled + 1}").assertIsNotSelected()
+    }
   }
 }

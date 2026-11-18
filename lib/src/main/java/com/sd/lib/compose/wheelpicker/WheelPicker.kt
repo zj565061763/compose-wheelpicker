@@ -19,6 +19,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -224,6 +226,7 @@ private fun WheelPicker(
   }
   val lazyListContent: LazyListScope.() -> Unit = remember(
     count,
+    state,
     safeLazyKey,
     itemModifier,
     displayHolder,
@@ -235,7 +238,9 @@ private fun WheelPicker(
           key = safeLazyKey,
         ) { index ->
           Box(
-            modifier = itemModifier,
+            modifier = itemModifier.semantics(mergeDescendants = true) {
+              selected = state.snappedIndex == index
+            },
             contentAlignment = Alignment.Center,
           ) {
             displayHolder.Display(index)
