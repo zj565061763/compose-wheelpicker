@@ -79,6 +79,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不替外部无帧时钟协程代借帧时钟：`animateScrollToIndex` 与官方 `LazyListState.animateScrollToItem` 一致，需在含 `MonotonicFrameClock` 的 Compose 协程作用域（如 `LaunchedEffect`、`rememberCoroutineScope`）中调用，不为缺少帧时钟的外部协程跨协程借用或等待帧时钟。
 - 不做同帧抢跑越界等待：修改数据状态后未等重组就在同一帧调用越界 `scrollToIndex` 时，按调用当下已知的 `count` 直接限制边界，不做跨帧挂起等待；动态扩容后的跳转应在数据生效后的 `LaunchedEffect` 中调用。
 - 不做半格偏移删首项补偿：手势停留在非零像素偏移期间并发删除当前首项时，交由 `LazyList` 原生布局与松手后的自动吸附处理。
+- 不对超大条目跨项动画做像素瞬移裁剪：`animateScrollToIndex` 直接复用官方 `LazyListState.animateScrollToItem`（仅在跨度超过 100 项时瞬移），极端超大 `itemSize` 下跨项像素距离过大导致的动画耗时增长属上游原生行为，不拆分为预跳转加短动画。
 
 ## 测试与仓库规范
 
