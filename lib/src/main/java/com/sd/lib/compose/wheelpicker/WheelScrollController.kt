@@ -16,6 +16,7 @@ internal interface WheelScrollController {
   val interactionSource: InteractionSource?
 
   fun onPositioned() {}
+  fun resetPositioned() {}
   fun requestScrollToItem(index: Int, scrollOffset: Int = 0)
   suspend fun scrollToItem(index: Int)
   suspend fun animateScrollToItem(index: Int)
@@ -60,6 +61,12 @@ internal class LazyListWheelScrollController(
   override fun onPositioned() {
     if (!isPositioned) {
       isPositioned = true
+    }
+  }
+
+  override fun resetPositioned() {
+    if (isPositioned) {
+      isPositioned = false
     }
   }
 

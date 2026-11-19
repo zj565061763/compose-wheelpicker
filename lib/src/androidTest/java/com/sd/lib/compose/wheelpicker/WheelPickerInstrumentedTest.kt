@@ -13,7 +13,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -393,7 +392,6 @@ class WheelPickerInstrumentedTest {
     val stateList = mutableStateListOf("A", "B", "C", "D", "E")
     var visible by mutableStateOf(true)
     var itemHeightPx = 0
-    var triggerClocklessAnimateOnRemount by mutableStateOf(false)
     var clocklessExceptionCaught = false
     val rawMainScope = CoroutineScope(Dispatchers.Main.immediate)
     lateinit var mainScope: CoroutineScope
@@ -412,18 +410,6 @@ class WheelPickerInstrumentedTest {
           key = { stateList[it] },
         ) { index ->
           BasicText(text = stateList[index])
-        }
-        SideEffect {
-          if (triggerClocklessAnimateOnRemount) {
-            triggerClocklessAnimateOnRemount = false
-            rawMainScope.launch {
-              try {
-                state.animateScrollToIndex(0)
-              } catch (_: IllegalStateException) {
-                clocklessExceptionCaught = true
-              }
-            }
-          }
         }
       }
     }
@@ -475,14 +461,23 @@ class WheelPickerInstrumentedTest {
     assertEquals(2, state.snappedIndex)
     assertEquals("B", stateList[state.snappedIndex])
 
-    // 3. 重挂载时无帧时钟动画抛异常后不残留状态，后续手势滑动仍正常更新 snappedIndex
+    // 3. 重挂载摆放完成后在无帧时钟作用域调用动画抛异常不残留状态，后续手势滑动仍正常更新 snappedIndex
     composeRule.runOnUiThread {
       visible = false
     }
     composeRule.waitForIdle()
     composeRule.runOnUiThread {
-      triggerClocklessAnimateOnRemount = true
       visible = true
+    }
+    composeRule.waitForIdle()
+    composeRule.runOnUiThread {
+      rawMainScope.launch {
+        try {
+          state.animateScrollToIndex(0)
+        } catch (_: IllegalStateException) {
+          clocklessExceptionCaught = true
+        }
+      }
     }
     composeRule.waitForIdle()
     assertTrue(clocklessExceptionCaught)
@@ -560,6 +555,10 @@ class WheelPickerInstrumentedTest {
     var allowAnimatePlace by mutableStateOf(false)
     var totalItemsDuringAnimateJump = -1
 
+    val remountAnimateState = WheelPickerState(initialIndex = 0)
+    var remountStage by mutableStateOf(0)
+    var allowRemountSecondMeasure by mutableStateOf(false)
+
     composeRule.setContent {
       composeScope = rememberCoroutineScope()
 
@@ -622,6 +621,46 @@ class WheelPickerInstrumentedTest {
           }
         }
       }
+
+      when (remountStage) {
+        0 -> {
+          VerticalWheelPicker(
+            count = 1,
+            state = remountAnimateState,
+            itemHeight = 40.dp,
+            unfocusedCount = 2,
+          ) { index ->
+            BasicText(text = "RemountOld-$index")
+          }
+        }
+        2 -> {
+          LaunchedEffect(Unit) {
+            remountAnimateState.animateScrollToIndex(8)
+            allowRemountSecondMeasure = true
+          }
+          Layout(
+            content = {
+              VerticalWheelPicker(
+                count = 20,
+                state = remountAnimateState,
+                itemHeight = 40.dp,
+                unfocusedCount = 2,
+              ) { index ->
+                BasicText(text = "RemountNew-$index")
+              }
+            },
+          ) { measurables, constraints ->
+            if (!allowRemountSecondMeasure) {
+              layout(0, 0) {}
+            } else {
+              val placeable = measurables.first().measure(constraints)
+              layout(placeable.width, placeable.height) {
+                placeable.placeRelative(0, 0)
+              }
+            }
+          }
+        }
+      }
     }
 
     composeRule.waitForIdle()
@@ -675,6 +714,28 @@ class WheelPickerInstrumentedTest {
     assertEquals(0f, scrollState.scrollPercentageOf(4))
     composeRule.onNodeWithText("Immediate-4").assertIsDisplayed()
     composeRule.onNodeWithText("Immediate-4").assertIsSelected()
+
+    // 旧 1 项滚轮卸载后复用同一状态挂载 20 项新滚轮，首次测量前调用 animateScrollToIndex(8) 不丢失目标
+    assertEquals(0, remountAnimateState.snappedIndex)
+    composeRule.onNodeWithText("RemountOld-0").assertIsSelected()
+
+    composeRule.runOnUiThread {
+      remountStage = 1
+    }
+    composeRule.waitForIdle()
+    assertEquals(-1, remountAnimateState.snappedIndex)
+
+    composeRule.runOnUiThread {
+      allowRemountSecondMeasure = false
+      remountStage = 2
+    }
+    composeRule.waitForIdle()
+    assertTrue(allowRemountSecondMeasure)
+    assertEquals(8, remountAnimateState.snappedIndex)
+    assertEquals(8, remountAnimateState.currentIndex)
+    assertEquals(0f, remountAnimateState.scrollPercentageOf(8))
+    composeRule.onNodeWithText("RemountNew-8").assertIsDisplayed()
+    composeRule.onNodeWithText("RemountNew-8").assertIsSelected()
   }
 
   @Test

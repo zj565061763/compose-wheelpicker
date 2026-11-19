@@ -166,8 +166,9 @@ internal class WheelPositionStore(
     flingGuardEnabled: Boolean,
   ) {
     val previousAttachment = attachment
-    if (previousAttachment != null && previousAttachment.owner !== owner) {
+    if (previousAttachment == null || previousAttachment.owner !== owner) {
       awaitingHandoffId = 0
+      scrollController.resetPositioned()
     }
     _unfocusedCount = unfocusedCount
     _reverseVisualDirection = reverseVisualDirection
@@ -261,6 +262,7 @@ internal class WheelPositionStore(
     }
     _hasFlingGuard = false
     awaitingHandoffId = 0
+    scrollController.resetPositioned()
     attachment = null
     snappedIndex = -1
     return true

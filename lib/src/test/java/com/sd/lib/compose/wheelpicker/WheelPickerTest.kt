@@ -293,6 +293,34 @@ class WheelPickerTest {
       assertEquals(5, measuredUnplacedState.currentIndex)
       assertEquals(5, measuredUnplacedState.snappedIndex)
       assertTrue(measuredUnplacedController.animateTargetsRequested.isEmpty())
+
+      // 旧 1 项滚轮卸载后复用同一状态挂载 20 项新滚轮，首次测量前调用 animateScrollToIndex(8) 不丢失目标
+      val remountController = FakeWheelScrollController(initialIndex = 0)
+      val remountState = WheelPickerState(
+        initialIndex = 0,
+        scrollController = remountController,
+      )
+      val firstOwner = Any()
+      val secondOwner = Any()
+      remountState.updateAttachment(owner = firstOwner, count = 1, unfocusedCount = 2, itemSizePx = 48)
+      remountController.applyMeasure(count = 1)
+      assertTrue(remountController.isPositioned)
+      assertEquals(0, remountState.snappedIndex)
+
+      remountState.detach(firstOwner)
+      assertFalse(remountController.isPositioned)
+      assertEquals(1, remountController.totalItemsCount)
+
+      remountState.updateAttachment(owner = secondOwner, count = 20, unfocusedCount = 2, itemSizePx = 48)
+      assertFalse(remountController.isPositioned)
+      remountState.animateScrollToIndex(8)
+      assertTrue(remountController.animateTargetsRequested.isEmpty())
+      assertEquals(8, remountState.snappedIndex)
+
+      remountController.applyMeasure(count = 20)
+      assertTrue(remountController.isPositioned)
+      assertEquals(8, remountState.currentIndex)
+      assertEquals(8, remountState.snappedIndex)
     }
   }
 
@@ -1163,6 +1191,7 @@ private class WheelCompositionHarness(
   private var _frameTimeNanos = 0L
   private var _latestCount = 0
   private var _latestKey: ((Int) -> Any)? = null
+  private var _measuredOwner: Any? = null
   private var _measuredCount = -1
   private var _measuredKey: ((Int) -> Any)? = null
 
@@ -1290,6 +1319,7 @@ private class WheelCompositionHarness(
     _composition = composition
     composition.setContent(content)
     Snapshot.sendApplyNotifications()
+    _measuredOwner = latestOwner
     _measuredCount = _latestCount
     _measuredKey = _latestKey
     controller.applyMeasure(count = _latestCount, key = _latestKey)
@@ -1313,7 +1343,8 @@ private class WheelCompositionHarness(
   }
 
   private fun applyPendingMeasure() {
-    if (_measuredCount != _latestCount || _measuredKey !== _latestKey) {
+    if (_measuredOwner !== latestOwner || _measuredCount != _latestCount || _measuredKey !== _latestKey) {
+      _measuredOwner = latestOwner
       _measuredCount = _latestCount
       _measuredKey = _latestKey
       controller.applyMeasure(count = _latestCount, key = _latestKey)
@@ -1344,6 +1375,7 @@ private class FakeWheelScrollController(
   private val _mutatorMutex = MutatorMutex()
   private val _interactionSource = MutableInteractionSource()
   private var _hadFirstNotEmptyLayout = false
+  private var _hasCurrentMountLayout by mutableStateOf(false)
   private var _activeGate: CompletableDeferred<Unit>? = null
   private var _measuredKeys: List<Any?> = emptyList()
   private var _lastKnownFirstItemKey: Any? = null
@@ -1373,7 +1405,7 @@ private class FakeWheelScrollController(
 
   override val isPositioned: Boolean
     get() {
-      return isPlaced && (_hadFirstNotEmptyLayout || totalItemsCount > 0)
+      return isPlaced && _hasCurrentMountLayout
     }
 
   override var totalItemsCount by mutableIntStateOf(0)
@@ -1384,12 +1416,21 @@ private class FakeWheelScrollController(
       return _interactionSource
     }
 
+  override fun onPositioned() {
+    _hasCurrentMountLayout = true
+  }
+
+  override fun resetPositioned() {
+    _hasCurrentMountLayout = false
+  }
+
   fun applyMeasure(
     count: Int,
     unfocusedCount: Int = 2,
     itemSizePx: Int = 48,
     key: ((Int) -> Any)? = null,
   ) {
+    _hasCurrentMountLayout = true
     val previousFirstIndex = firstVisibleItemIndex
     val previousFirstKey = _lastKnownFirstItemKey
     totalItemsCount = count
