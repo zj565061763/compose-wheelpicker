@@ -34,7 +34,7 @@ internal class WheelScrollExecutor(
     index: Int,
     animate: Boolean,
   ) {
-    store.invalidateAwaitingFlingHandoff()
+    store.invalidateActiveFlingHandoffs()
     val currentAttachment = store.attachment
     if (currentAttachment == null || currentAttachment.count <= 0) {
       val requestedIndex = index.coerceAtLeast(0)

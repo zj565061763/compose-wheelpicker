@@ -15,7 +15,10 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollDispatcher
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -25,6 +28,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import java.io.Serializable
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 
 /**
  * 垂直滚轮选择器
@@ -163,15 +169,31 @@ private fun WheelPicker(
   )
 
   val scrollEnabled = userScrollEnabled && (count > 0)
+  val flingGuardDispatcher = remember(state, owner) { NestedScrollDispatcher() }
+  val activeFlingJobsProvider: () -> Sequence<Job> = remember(flingGuardDispatcher) {
+    {
+      try {
+        flingGuardDispatcher.coroutineScope.coroutineContext[Job]?.children ?: emptySequence()
+      } catch (_: IllegalStateException) {
+        emptySequence()
+      }
+    }
+  }
   val flingGuardConnection = remember(state, owner) {
     object : NestedScrollConnection {
-      override suspend fun onPreFling(available: Velocity): Velocity {
-        // 离手等待交接期间若发生显式编程跳转，消费旧手势残余速度避免覆盖新目标
-        return if (state.onPreFlingHandoff(owner)) {
-          available
-        } else {
-          Velocity.Zero
+      override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (source == NestedScrollSource.UserInput) {
+          state.onUserPreScroll(owner)
         }
+        return Offset.Zero
+      }
+
+      override suspend fun onPreFling(available: Velocity): Velocity {
+        // 离手等待交接期间若已被显式跳转或后续手势作废，直接取消本次离手协程避免覆盖新目标或抢占动画
+        if (state.onPreFlingHandoff(owner = owner, flingJob = currentCoroutineContext()[Job])) {
+          throw CancellationException("Wheel fling handoff invalidated")
+        }
+        return Velocity.Zero
       }
 
       override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
@@ -189,6 +211,7 @@ private fun WheelPicker(
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
       flingGuardEnabled = scrollEnabled,
+      activeFlingJobsProvider = activeFlingJobsProvider,
     )
   }
 
@@ -264,7 +287,10 @@ private fun WheelPicker(
     },
     listContent = {
       WheelLazyList(
-        modifier = Modifier.nestedScroll(flingGuardConnection),
+        modifier = Modifier.nestedScroll(
+          connection = flingGuardConnection,
+          dispatcher = flingGuardDispatcher,
+        ),
         orientation = orientation,
         state = state.lazyListState,
         contentPadding = viewportState.contentPadding,

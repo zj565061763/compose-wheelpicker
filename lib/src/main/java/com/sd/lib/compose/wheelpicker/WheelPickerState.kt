@@ -9,6 +9,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filter
 
 /** 创建并记住[WheelPickerState]，[initialIndex]为首次创建时的初始索引，配置变更后恢复已保存的位置 */
@@ -109,8 +110,18 @@ class WheelPickerState internal constructor(
     )
   }
 
-  internal fun onPreFlingHandoff(owner: Any): Boolean {
-    return _store.onPreFlingHandoff(owner)
+  internal fun onUserPreScroll(owner: Any) {
+    _store.onUserPreScroll(owner)
+  }
+
+  internal fun onPreFlingHandoff(
+    owner: Any,
+    flingJob: Job?,
+  ): Boolean {
+    return _store.onPreFlingHandoff(
+      owner = owner,
+      flingJob = flingJob,
+    )
   }
 
   internal fun onFlingHandoffResolved(owner: Any) {
@@ -124,6 +135,7 @@ class WheelPickerState internal constructor(
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
     flingGuardEnabled: Boolean = false,
+    activeFlingJobsProvider: (() -> Sequence<Job>)? = null,
   ) {
     val previousOwner = _store.attachment?.owner
     if (count <= 0 || (previousOwner != null && previousOwner !== owner)) {
@@ -137,6 +149,7 @@ class WheelPickerState internal constructor(
       reverseVisualDirection = reverseVisualDirection,
       flingGuardEnabled = flingGuardEnabled,
       isProgrammaticScrollInFlight = _scrollExecutor.isInFlight,
+      activeFlingJobsProvider = activeFlingJobsProvider,
     )
   }
 

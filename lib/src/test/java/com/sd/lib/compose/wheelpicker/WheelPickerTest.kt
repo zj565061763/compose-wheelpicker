@@ -742,19 +742,27 @@ class WheelPickerTest {
         harness.stepFrame()
         controller.emitDragStop(staleFlingDragStart)
         controller.endGestureScroll()
+        val staleFlingJob = Job().also {
+          harness.activeFlingJobs.add(it)
+        }
         harness.stepFrame()
 
         state.scrollToIndex(35)
         harness.stepFrame()
         assertEquals(35, state.snappedIndex)
-        assertTrue(state.onPreFlingHandoff(owner))
-        assertFalse(state.onPreFlingHandoff(owner))
+        assertTrue(state.onPreFlingHandoff(owner = owner, flingJob = staleFlingJob))
+        assertFalse(state.onPreFlingHandoff(owner = owner, flingJob = staleFlingJob))
+        staleFlingJob.cancel()
 
+        // 第一次手势挂起期间执行 scrollToIndex，第二次手势正常结束并吸附后，乱序恢复的第一次手势仍被取消
         val interruptedHandoffDragStart = controller.emitDragStart()
         controller.beginGestureScroll(index = 36, offset = 12)
         harness.stepFrame()
         controller.emitDragStop(interruptedHandoffDragStart)
         controller.endGestureScroll()
+        val interruptedFlingJob = Job().also {
+          harness.activeFlingJobs.add(it)
+        }
         harness.stepFrame()
 
         state.scrollToIndex(40)
@@ -762,16 +770,83 @@ class WheelPickerTest {
         assertEquals(40, state.snappedIndex)
 
         val freshGestureDragStart = controller.emitDragStart()
+        state.onUserPreScroll(owner)
         controller.beginGestureScroll(index = 28, offset = 10)
         harness.stepFrame()
         controller.emitDragStop(freshGestureDragStart)
         controller.endGestureScroll()
+        val freshFlingJob = Job().also {
+          harness.activeFlingJobs.add(it)
+        }
         harness.stepFrame()
-        assertFalse(state.onPreFlingHandoff(owner))
+        assertFalse(state.onPreFlingHandoff(owner = owner, flingJob = freshFlingJob))
+        freshFlingJob.complete()
         state.onFlingHandoffResolved(owner)
         harness.stepFrame()
         harness.stepFrame()
         assertEquals(28, state.snappedIndex)
+        assertTrue(state.onPreFlingHandoff(owner = owner, flingJob = interruptedFlingJob))
+        interruptedFlingJob.cancel()
+
+        // 连续两次手势均挂起 onPreFling 且第一次先乱序返回时，第一次被取消且不提前清掉第二次的离手保护
+        val firstConcurrentDragStart = controller.emitDragStart()
+        state.onUserPreScroll(owner)
+        controller.beginGestureScroll(index = 30, offset = 14)
+        harness.stepFrame()
+        controller.emitDragStop(firstConcurrentDragStart)
+        controller.endGestureScroll()
+        val firstConcurrentFlingJob = Job().also {
+          harness.activeFlingJobs.add(it)
+        }
+        harness.stepFrame()
+
+        val secondConcurrentDragStart = controller.emitDragStart()
+        state.onUserPreScroll(owner)
+        controller.beginGestureScroll(index = 26, offset = 18)
+        harness.stepFrame()
+        controller.emitDragStop(secondConcurrentDragStart)
+        controller.endGestureScroll()
+        val secondConcurrentFlingJob = Job().also {
+          harness.activeFlingJobs.add(it)
+        }
+        controller.animateTargetsRequested.clear()
+        harness.stepFrame()
+
+        assertTrue(state.onPreFlingHandoff(owner = owner, flingJob = firstConcurrentFlingJob))
+        firstConcurrentFlingJob.cancel()
+        repeat(4) {
+          harness.stepFrame()
+        }
+        assertTrue(controller.animateTargetsRequested.isEmpty())
+
+        assertFalse(state.onPreFlingHandoff(owner = owner, flingJob = secondConcurrentFlingJob))
+        secondConcurrentFlingJob.complete()
+        state.onFlingHandoffResolved(owner)
+        harness.stepFrame()
+        harness.stepFrame()
+        assertEquals(26, state.snappedIndex)
+
+        // 超过 60 帧自动吸附保护超时后父容器 onPreFling 仍未返回时，显式跳转依然能作废迟到的旧 fling
+        val longSuspendedDragStart = controller.emitDragStart()
+        state.onUserPreScroll(owner)
+        controller.beginGestureScroll(index = 24, offset = 14)
+        harness.stepFrame()
+        controller.emitDragStop(longSuspendedDragStart)
+        controller.endGestureScroll()
+        val longSuspendedFlingJob = Job().also {
+          harness.activeFlingJobs.add(it)
+        }
+        repeat(65) {
+          harness.stepFrame()
+        }
+        assertEquals(24, state.snappedIndex)
+
+        state.scrollToIndex(32)
+        harness.stepFrame()
+        assertEquals(32, state.snappedIndex)
+        assertTrue(state.onPreFlingHandoff(owner = owner, flingJob = longSuspendedFlingJob))
+        assertFalse(state.onPreFlingHandoff(owner = owner, flingJob = longSuspendedFlingJob))
+        longSuspendedFlingJob.cancel()
       } finally {
         harness.dispose()
       }
@@ -1023,6 +1098,7 @@ private class WheelCompositionHarness(
   val state: WheelPickerState,
 ) {
   val clock = BroadcastFrameClock()
+  val activeFlingJobs = mutableListOf<Job>()
 
   var latestOwner: Any? = null
     private set
@@ -1145,6 +1221,7 @@ private class WheelCompositionHarness(
         unfocusedCount = 2,
         itemSizePx = 48,
         flingGuardEnabled = userScrollEnabled && count > 0,
+        activeFlingJobsProvider = { activeFlingJobs.asSequence() },
       )
     }
     DisposableEffect(state, owner) {
@@ -1205,6 +1282,8 @@ private class WheelCompositionHarness(
   }
 
   fun dispose() {
+    activeFlingJobs.forEach { it.cancel() }
+    activeFlingJobs.clear()
     _composition?.dispose()
     _recomposer.cancel()
     _recomposeJob.cancel()

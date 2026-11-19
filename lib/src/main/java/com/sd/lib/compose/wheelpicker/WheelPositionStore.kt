@@ -5,6 +5,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Job
 
 internal data class WheelAttachment(
   val owner: Any,
@@ -18,7 +21,8 @@ internal class WheelPositionStore(
 ) {
   private var _observerOwner: Any? = null
   private var _hasFlingGuard = false
-  private var _cancelAwaitingFling = false
+  private var _activeFlingJobsProvider: (() -> Sequence<Job>)? = null
+  private val _invalidatedFlingJobs: MutableSet<Job> = Collections.newSetFromMap(ConcurrentHashMap())
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
 
@@ -85,7 +89,6 @@ internal class WheelPositionStore(
       _observerOwner = null
       isDragged = false
       isAwaitingFlingHandoff = false
-      _cancelAwaitingFling = false
     }
   }
 
@@ -96,7 +99,6 @@ internal class WheelPositionStore(
     if (_observerOwner === owner) {
       if (dragged) {
         isAwaitingFlingHandoff = false
-        _cancelAwaitingFling = false
       }
       if (isDragged != dragged) {
         isDragged = dragged
@@ -107,33 +109,49 @@ internal class WheelPositionStore(
   fun onDragStoppedAwaitingFling(owner: Any) {
     if (_observerOwner === owner && _hasFlingGuard) {
       isAwaitingFlingHandoff = true
-      _cancelAwaitingFling = false
     }
   }
 
-  fun invalidateAwaitingFlingHandoff() {
+  /** 用户手势产生滚动增量时作废此前尚未完成交接的旧离手协程 */
+  fun onUserPreScroll(owner: Any) {
+    if (attachment?.owner === owner || _observerOwner === owner) {
+      invalidateActiveFlingHandoffs()
+    }
+  }
+
+  /** 作废当前嵌套滚动作用域内尚未结束的离手协程，防止迟到或乱序恢复的旧 fling 覆盖最新目标 */
+  fun invalidateActiveFlingHandoffs() {
     if (isAwaitingFlingHandoff) {
       isAwaitingFlingHandoff = false
-      _cancelAwaitingFling = true
+    }
+    val jobs = _activeFlingJobsProvider?.invoke() ?: return
+    for (job in jobs) {
+      if (job.isActive && _invalidatedFlingJobs.add(job)) {
+        job.invokeOnCompletion {
+          _invalidatedFlingJobs.remove(job)
+        }
+      }
     }
   }
 
-  fun onPreFlingHandoff(owner: Any): Boolean {
+  /** 校验离手协程是否仍有效，返回 true 表示该离手交接已作废需立即取消 */
+  fun onPreFlingHandoff(
+    owner: Any,
+    flingJob: Job?,
+  ): Boolean {
     if (attachment?.owner !== owner && _observerOwner !== owner) {
-      return false
-    }
-    isAwaitingFlingHandoff = false
-    if (_cancelAwaitingFling) {
-      _cancelAwaitingFling = false
       return true
     }
+    if (flingJob != null && _invalidatedFlingJobs.remove(flingJob)) {
+      return true
+    }
+    isAwaitingFlingHandoff = false
     return false
   }
 
   fun onFlingHandoffResolved(owner: Any) {
     if (attachment?.owner === owner || _observerOwner === owner) {
       isAwaitingFlingHandoff = false
-      _cancelAwaitingFling = false
     }
   }
 
@@ -145,14 +163,18 @@ internal class WheelPositionStore(
     reverseVisualDirection: Boolean,
     flingGuardEnabled: Boolean,
     isProgrammaticScrollInFlight: Boolean,
+    activeFlingJobsProvider: (() -> Sequence<Job>)? = null,
   ) {
     val previousAttachment = attachment
+    if (previousAttachment != null && previousAttachment.owner !== owner) {
+      invalidateActiveFlingHandoffs()
+    }
     _unfocusedCount = unfocusedCount
     _reverseVisualDirection = reverseVisualDirection
+    _activeFlingJobsProvider = activeFlingJobsProvider
     _hasFlingGuard = flingGuardEnabled && count > 0
     if (!_hasFlingGuard) {
-      isAwaitingFlingHandoff = false
-      _cancelAwaitingFling = false
+      invalidateActiveFlingHandoffs()
     }
 
     if (count <= 0) {
@@ -246,8 +268,8 @@ internal class WheelPositionStore(
       }
     }
     _hasFlingGuard = false
-    isAwaitingFlingHandoff = false
-    _cancelAwaitingFling = false
+    invalidateActiveFlingHandoffs()
+    _activeFlingJobsProvider = null
     attachment = null
     snappedIndex = -1
     return true
