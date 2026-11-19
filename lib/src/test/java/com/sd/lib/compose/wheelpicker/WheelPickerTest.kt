@@ -1031,20 +1031,92 @@ class WheelPickerTest {
     assertEquals(0, viewportState.resolveUnfocusedCount(itemSizePx = 60, requestedUnfocusedCount = 2))
     assertSame(paddingRef, viewportState.contentPadding)
 
-    // 缩容使原中间可见项变为新末项（count - 1）且残留正偏移时，将末项偏移归零
-    val controller = FakeWheelScrollController(initialIndex = 2)
-    val state = WheelPickerState(initialIndex = 2, scrollController = controller)
-    val owner = Any()
-    state.updateAttachment(owner = owner, count = 5, unfocusedCount = 2, itemSizePx = 48)
-    controller.applyMeasure(count = 5)
-    controller.setPositionInScroll(index = 2, offset = 20)
-    assertEquals(20, controller.firstVisibleItemScrollOffset)
+    runBlocking {
+      // 1. 尾部缩容使原中间可见项在新列表测量完成后确实成为末项且残留正偏移时，将末项偏移归零
+      val tailShrinkController = FakeWheelScrollController(initialIndex = 2)
+      val tailShrinkState = WheelPickerState(initialIndex = 2, scrollController = tailShrinkController)
+      var tailItems by mutableStateOf((0..4).toList())
+      val tailHarness = WheelCompositionHarness(
+        parentContext = coroutineContext,
+        controller = tailShrinkController,
+        state = tailShrinkState,
+      )
+      try {
+        tailHarness.composeWheelWithChildParam(itemsProvider = { tailItems })
+        tailHarness.stepFrame()
+        assertEquals(2, tailShrinkState.snappedIndex)
 
-    state.updateAttachment(owner = owner, count = 3, unfocusedCount = 2, itemSizePx = 48)
-    assertEquals(2, controller.firstVisibleItemIndex)
-    assertEquals(0, controller.firstVisibleItemScrollOffset)
-    assertEquals(2, state.snappedIndex)
-    state.detach(owner)
+        tailShrinkController.setPositionInScroll(index = 2, offset = 20)
+        // 新列表尚未完成测量（totalItemsCount 仍为 5）时，updateAttachment 不提前调用 requestScrollToItem 覆盖锚点
+        tailShrinkState.updateAttachment(
+          owner = checkNotNull(tailHarness.latestOwner),
+          count = 3,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+        )
+        assertEquals(20, tailShrinkController.firstVisibleItemScrollOffset)
+
+        tailItems = (0..2).toList()
+        tailHarness.stepFrame()
+        assertTrue(tailShrinkController.animateTargetsRequested.isEmpty())
+        assertEquals(2, tailShrinkController.firstVisibleItemIndex)
+        assertEquals(0, tailShrinkController.firstVisibleItemScrollOffset)
+        assertEquals(2, tailShrinkState.snappedIndex)
+      } finally {
+        tailHarness.dispose()
+      }
+
+      // 2. 父容器挂起 onPreFling 期间删除头部条目缩容时，保留存活稳定 key 锚点，最终吸附在重定位后的索引
+      val headShrinkController = FakeWheelScrollController(initialIndex = 8).apply {
+        supportsNativeWindowTracking = true
+        emulateRealLazyListAnimateTiming = true
+      }
+      val headShrinkState = WheelPickerState(initialIndex = 8, scrollController = headShrinkController)
+      var headItems by mutableStateOf((0..13).toList())
+      val headHarness = WheelCompositionHarness(
+        parentContext = coroutineContext,
+        controller = headShrinkController,
+        state = headShrinkState,
+      )
+      try {
+        headHarness.composeWheelWithChildParam(
+          itemsProvider = { headItems },
+          userScrollEnabledProvider = { true },
+        )
+        headHarness.stepFrame()
+        assertEquals(8, headShrinkState.snappedIndex)
+
+        val dragStart = headShrinkController.emitDragStart()
+        headShrinkController.beginGestureScroll(index = 8, offset = 18)
+        headHarness.stepFrame()
+        headShrinkController.emitDragStop(dragStart)
+        headShrinkController.endGestureScroll()
+        Snapshot.sendApplyNotifications()
+        yield()
+
+        // 删除开头 6 项：snappedIndex 立即夹紧至 7 避免越界，测量后稳定 key = 8 重定位到索引 2
+        headItems = headItems.drop(6)
+        headHarness.stepFrame()
+        assertEquals(7, headShrinkState.snappedIndex)
+        assertEquals(2, headShrinkController.firstVisibleItemIndex)
+        assertEquals(18, headShrinkController.firstVisibleItemScrollOffset)
+        assertEquals(2, headShrinkState.currentIndex)
+        val savedDuringPreFling = with(WheelPickerState.Saver) {
+          SaverScope { true }.save(headShrinkState)
+        }
+        assertEquals(2, savedDuringPreFling)
+
+        headShrinkState.onFlingHandoffResolved(checkNotNull(headHarness.latestOwner))
+        headHarness.stepFrame()
+        headHarness.stepFrame()
+        assertEquals(2, headShrinkController.firstVisibleItemIndex)
+        assertEquals(0, headShrinkController.firstVisibleItemScrollOffset)
+        assertEquals(2, headShrinkState.snappedIndex)
+        assertEquals(8, headItems[headShrinkState.snappedIndex])
+      } finally {
+        headHarness.dispose()
+      }
+    }
   }
 
   @Test

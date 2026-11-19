@@ -97,6 +97,7 @@ internal class WheelSnapObserver(
         firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
         hasVisibleItems = scrollController.hasVisibleItems,
         isPositioned = scrollController.isPositioned,
+        totalItemsCount = scrollController.totalItemsCount,
       )
     }.collect { _ ->
       val initialAttachment = store.attachment
@@ -115,6 +116,10 @@ internal class WheelSnapObserver(
         wasActiveGestureOrScroll = true
         lastAutoSnapState = null
         store.updateLastKnownIndexFromLive()
+        return@collect
+      }
+      if (scrollController.hasVisibleItems && scrollController.totalItemsCount != initialAttachment.count) {
+        lastAutoSnapState = null
         return@collect
       }
 
@@ -165,6 +170,15 @@ internal class WheelSnapObserver(
           store.clearSnappedIndex()
           return@collect
         }
+        if (scrollController.hasVisibleItems && scrollController.totalItemsCount != currentAttachment.count) {
+          lastAutoSnapState = null
+          return@collect
+        }
+
+        store.clampLastItemResidualOffsetIfMeasured(
+          owner = owner,
+          isProgrammaticScrollInFlight = scrollExecutor.isInFlight,
+        )
 
         val currentOffset = scrollController.firstVisibleItemScrollOffset
         if (!scrollController.hasVisibleItems || currentOffset == 0) {
@@ -226,6 +240,7 @@ private data class ObserveSnapshot(
   val firstVisibleItemScrollOffset: Int,
   val hasVisibleItems: Boolean,
   val isPositioned: Boolean,
+  val totalItemsCount: Int,
 )
 
 private data class AutoSnapState(

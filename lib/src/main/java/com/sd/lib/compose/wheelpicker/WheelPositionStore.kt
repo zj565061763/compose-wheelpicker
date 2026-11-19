@@ -224,16 +224,6 @@ internal class WheelPositionStore(
         val clampedTarget = pending.coerceIn(0, count - 1)
         pendingTargetIndex = clampedTarget
         lastKnownIndex = clampedTarget
-      } else if (
-        !scrollController.isScrollInProgress &&
-        !isProgrammaticScrollInFlight &&
-        scrollController.hasVisibleItems &&
-        scrollController.firstVisibleItemIndex >= count - 1 &&
-        scrollController.firstVisibleItemScrollOffset > 0
-      ) {
-        // 缩容后原中间项变为新末项且残留正偏移时，将末项偏移归零
-        val lastIndex = count - 1
-        scrollController.requestScrollToItem(index = lastIndex, scrollOffset = 0)
       }
     }
 
@@ -284,11 +274,41 @@ internal class WheelPositionStore(
   }
 
   fun updateLastKnownIndexFromLive() {
-    if (scrollController.totalItemsCount > 0) {
+    val current = attachment
+    if (
+      current != null &&
+      current.count > 0 &&
+      scrollController.totalItemsCount > 0 &&
+      (!scrollController.hasVisibleItems || scrollController.totalItemsCount == current.count)
+    ) {
       val liveIndex = currentIndex
       if (liveIndex >= 0) {
         lastKnownIndex = liveIndex
       }
+    }
+  }
+
+  /** 新列表完成测量后若实际末项仍残留正偏移，则在静止且无待交接手势时将末项偏移归零 */
+  fun clampLastItemResidualOffsetIfMeasured(
+    owner: Any,
+    isProgrammaticScrollInFlight: Boolean,
+  ) {
+    val current = attachment
+    if (current?.owner !== owner || current.count <= 0) {
+      return
+    }
+    if (
+      !scrollController.isScrollInProgress &&
+      !isProgrammaticScrollInFlight &&
+      !isDragged &&
+      !isAwaitingFlingHandoff &&
+      scrollController.hasVisibleItems &&
+      scrollController.totalItemsCount == current.count &&
+      scrollController.firstVisibleItemIndex >= current.count - 1 &&
+      scrollController.firstVisibleItemScrollOffset > 0
+    ) {
+      val lastIndex = current.count - 1
+      scrollController.requestScrollToItem(index = lastIndex, scrollOffset = 0)
     }
   }
 
@@ -305,6 +325,9 @@ internal class WheelPositionStore(
       return
     }
     if (isProgrammaticScrollInFlight || scrollController.isScrollInProgress) {
+      return
+    }
+    if (scrollController.hasVisibleItems && scrollController.totalItemsCount != finalAttachment.count) {
       return
     }
     val settled = currentIndex
@@ -333,7 +356,13 @@ internal class WheelPositionStore(
     if (pending != null) {
       return pending.coerceAtLeast(0)
     }
-    if (scrollController.totalItemsCount > 0) {
+    val current = attachment
+    if (
+      current != null &&
+      current.count > 0 &&
+      scrollController.totalItemsCount > 0 &&
+      (!scrollController.hasVisibleItems || scrollController.totalItemsCount == current.count)
+    ) {
       val live = currentIndex
       if (live >= 0) {
         return live

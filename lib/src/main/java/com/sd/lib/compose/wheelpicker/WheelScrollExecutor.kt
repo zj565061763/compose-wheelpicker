@@ -90,6 +90,7 @@ internal class WheelScrollExecutor(
     }
     if (
       !scrollController.isPositioned ||
+      (scrollController.hasVisibleItems && scrollController.totalItemsCount != currentAttachment.count) ||
       scrollController.isScrollInProgress ||
       store.isDragged ||
       store.isAwaitingFlingHandoff ||
