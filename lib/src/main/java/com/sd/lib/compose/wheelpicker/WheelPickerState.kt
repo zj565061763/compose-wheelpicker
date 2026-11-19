@@ -110,6 +110,12 @@ class WheelPickerState internal constructor(
     )
   }
 
+  internal fun onPositioned(owner: Any) {
+    if (_store.attachment?.owner === owner) {
+      _scrollController.onPositioned()
+    }
+  }
+
   internal fun onUserPreScroll(owner: Any) {
     _store.onUserPreScroll(owner)
   }

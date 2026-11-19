@@ -51,7 +51,7 @@ internal class WheelScrollExecutor(
     cancelActiveScroll()
     store.lastKnownIndex = targetIndex
 
-    if (scrollController.totalItemsCount <= 0) {
+    if (!scrollController.isPositioned || scrollController.totalItemsCount <= 0) {
       store.pendingTargetIndex = null
       scrollController.requestScrollToItem(index = targetIndex, scrollOffset = 0)
       store.updateSnappedIndex(targetIndex)
@@ -89,6 +89,7 @@ internal class WheelScrollExecutor(
       return false
     }
     if (
+      !scrollController.isPositioned ||
       scrollController.isScrollInProgress ||
       store.isDragged ||
       store.isAwaitingFlingHandoff ||

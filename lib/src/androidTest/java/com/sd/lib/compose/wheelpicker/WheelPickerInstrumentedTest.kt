@@ -12,6 +12,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -24,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -748,5 +750,137 @@ class WheelPickerInstrumentedTest {
     if (settled + 1 < 30) {
       composeRule.onNodeWithText("Option-${settled + 1}").assertIsNotSelected()
     }
+  }
+
+  @Test
+  fun testMeasuredBeforeFirstPlacementProgrammaticScrollDoesNotHang() {
+    val scrollState = WheelPickerState(initialIndex = 0)
+    val animateState = WheelPickerState(initialIndex = 0)
+    lateinit var composeScope: CoroutineScope
+    var showScrollWheel by mutableStateOf(true)
+    var scrollJumpTarget by mutableStateOf(8)
+    var scrollMeasured by mutableStateOf(false)
+    var allowScrollPlace by mutableStateOf(false)
+    var totalItemsDuringScrollJump = -1
+
+    var animateMeasured by mutableStateOf(false)
+    var allowAnimatePlace by mutableStateOf(false)
+    var totalItemsDuringAnimateJump = -1
+
+    composeRule.setContent {
+      composeScope = rememberCoroutineScope()
+
+      if (showScrollWheel) {
+        LaunchedEffect(scrollMeasured, scrollJumpTarget) {
+          if (scrollMeasured && !allowScrollPlace) {
+            totalItemsDuringScrollJump = scrollState.lazyListState.layoutInfo.totalItemsCount
+            scrollState.scrollToIndex(scrollJumpTarget)
+            allowScrollPlace = true
+          }
+        }
+
+        Layout(
+          content = {
+            VerticalWheelPicker(
+              count = 12,
+              state = scrollState,
+              itemHeight = 40.dp,
+              unfocusedCount = 2,
+            ) { index ->
+              BasicText(text = "Immediate-$index")
+            }
+          },
+        ) { measurables, constraints ->
+          val placeable = measurables.first().measure(constraints)
+          scrollMeasured = true
+          layout(placeable.width, placeable.height) {
+            if (allowScrollPlace) {
+              placeable.placeRelative(0, 0)
+            }
+          }
+        }
+      }
+
+      LaunchedEffect(animateMeasured) {
+        if (animateMeasured) {
+          totalItemsDuringAnimateJump = animateState.lazyListState.layoutInfo.totalItemsCount
+          animateState.animateScrollToIndex(8)
+          allowAnimatePlace = true
+        }
+      }
+
+      Layout(
+        content = {
+          HorizontalWheelPicker(
+            count = 12,
+            state = animateState,
+            itemWidth = 40.dp,
+            unfocusedCount = 2,
+          ) { index ->
+            BasicText(text = "Animated-$index")
+          }
+        },
+      ) { measurables, constraints ->
+        val placeable = measurables.first().measure(constraints)
+        animateMeasured = true
+        layout(placeable.width, placeable.height) {
+          if (allowAnimatePlace) {
+            placeable.placeRelative(0, 0)
+          }
+        }
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(12, totalItemsDuringScrollJump)
+    assertTrue(allowScrollPlace)
+    assertEquals(8, scrollState.snappedIndex)
+    assertEquals(8, scrollState.currentIndex)
+    assertEquals(0f, scrollState.scrollPercentageOf(8))
+    composeRule.onNodeWithText("Immediate-8").assertIsDisplayed()
+    composeRule.onNodeWithText("Immediate-8").assertIsSelected()
+
+    assertEquals(12, totalItemsDuringAnimateJump)
+    assertTrue(allowAnimatePlace)
+    assertEquals(8, animateState.snappedIndex)
+    assertEquals(8, animateState.currentIndex)
+    assertEquals(0f, animateState.scrollPercentageOf(8))
+    composeRule.onNodeWithText("Animated-8").assertIsDisplayed()
+    composeRule.onNodeWithText("Animated-8").assertIsSelected()
+
+    // 首次摆放完成后再次调用 animateScrollToIndex 可正常动画滚动到新目标
+    composeRule.runOnUiThread {
+      composeScope.launch {
+        animateState.animateScrollToIndex(3)
+      }
+    }
+    composeRule.waitForIdle()
+    assertEquals(3, animateState.snappedIndex)
+    assertEquals(3, animateState.currentIndex)
+    assertEquals(0f, animateState.scrollPercentageOf(3))
+    composeRule.onNodeWithText("Animated-3").assertIsSelected()
+
+    // 卸载后复用同一 WheelPickerState 重新挂载到先测量后摆放的容器时，首次摆放前跳转同样不挂起
+    composeRule.runOnUiThread {
+      showScrollWheel = false
+    }
+    composeRule.waitForIdle()
+    assertEquals(-1, scrollState.snappedIndex)
+
+    composeRule.runOnUiThread {
+      totalItemsDuringScrollJump = -1
+      scrollMeasured = false
+      allowScrollPlace = false
+      scrollJumpTarget = 4
+      showScrollWheel = true
+    }
+    composeRule.waitForIdle()
+    assertEquals(12, totalItemsDuringScrollJump)
+    assertTrue(allowScrollPlace)
+    assertEquals(4, scrollState.snappedIndex)
+    assertEquals(4, scrollState.currentIndex)
+    assertEquals(0f, scrollState.scrollPercentageOf(4))
+    composeRule.onNodeWithText("Immediate-4").assertIsDisplayed()
+    composeRule.onNodeWithText("Immediate-4").assertIsSelected()
   }
 }

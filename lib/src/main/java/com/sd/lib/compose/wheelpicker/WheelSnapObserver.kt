@@ -96,6 +96,7 @@ internal class WheelSnapObserver(
         firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
         firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
         hasVisibleItems = scrollController.hasVisibleItems,
+        isPositioned = scrollController.isPositioned,
       )
     }.collect { _ ->
       val initialAttachment = store.attachment
@@ -224,6 +225,7 @@ private data class ObserveSnapshot(
   val firstVisibleItemIndex: Int,
   val firstVisibleItemScrollOffset: Int,
   val hasVisibleItems: Boolean,
+  val isPositioned: Boolean,
 )
 
 private data class AutoSnapState(

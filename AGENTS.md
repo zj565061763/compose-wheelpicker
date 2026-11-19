@@ -63,7 +63,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 视觉方向符号：RTL 布局下的水平滚轮与 `reverseLayout = true` 需保持 `scrollPercentageOf` 视觉方向符号一致。
 - 离手衔接保护：禁用默认 `overscrollEffect`，松手或触摸取消时通过 `isAwaitingFlingHandoff` 配合 `NestedScrollConnection`（含 60 帧超时兜底）等待嵌套滚动父容器完成 `onPreFling`，不得提前启动自动吸附截停 fling；显式跳转或后续手势按离手协程 `Job` 独立作废尚未完成交接的旧 fling，防止迟到或乱序恢复的旧交接覆盖新目标或打断新动画。
 - 静止自动吸附：停止在非零像素偏移时自动归位至最近条目并更新 `snappedIndex`。
-- 预跳转与无死锁：未挂载、空数据或首次布局前调用 `scrollToIndex` / `animateScrollToIndex` 不得挂起死锁，待后续非空挂载时限制在 `0..<count` 内生效。
+- 预跳转与无死锁：未挂载、空数据或首次摆放（`onGloballyPositioned`）完成前调用 `scrollToIndex` / `animateScrollToIndex` 不得挂起死锁，通过 `requestScrollToItem` 记录目标并在非空挂载摆放后限制在 `0..<count` 内生效。
 - 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时立即夹紧至 `count - 1`，原中间项变为新末项且残留正偏移时将偏移归零。
 
 ## 设计取舍与代码审查约定
@@ -92,4 +92,4 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 | 测试类 | 覆盖范围 |
 |---|---|
 | `WheelPickerTest` | `unfocusedCount` 防溢出收缩、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与末项残余偏移归零、常规 `key` 增删重排同步 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧与乱序 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与重挂载跳转、条目选中无障碍语义更新 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧与乱序 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与重挂载跳转、条目选中无障碍语义更新、已测量未首次摆放时跳转无死锁 |

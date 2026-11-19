@@ -20,6 +20,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollDispatcher
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.selected
@@ -287,10 +288,14 @@ private fun WheelPicker(
     },
     listContent = {
       WheelLazyList(
-        modifier = Modifier.nestedScroll(
-          connection = flingGuardConnection,
-          dispatcher = flingGuardDispatcher,
-        ),
+        modifier = Modifier
+          .nestedScroll(
+            connection = flingGuardConnection,
+            dispatcher = flingGuardDispatcher,
+          )
+          .onGloballyPositioned {
+            state.onPositioned(owner)
+          },
         orientation = orientation,
         state = state.lazyListState,
         contentPadding = viewportState.contentPadding,

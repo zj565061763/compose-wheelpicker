@@ -264,6 +264,35 @@ class WheelPickerTest {
       state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
       assertEquals(8, state.currentIndex)
       assertEquals(8, state.snappedIndex)
+
+      // 已完成测量（totalItemsCount > 0）但尚未完成首次摆放（isPositioned == false）时，两个跳转 API 均不挂起
+      val measuredUnplacedController = FakeWheelScrollController(initialIndex = 0).apply {
+        isPlaced = false
+        pauseAnimations = true
+      }
+      val measuredUnplacedState = WheelPickerState(
+        initialIndex = 0,
+        scrollController = measuredUnplacedController,
+      )
+      val unplacedOwner = Any()
+      measuredUnplacedState.updateAttachment(
+        owner = unplacedOwner,
+        count = 12,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+      )
+      measuredUnplacedController.applyMeasure(count = 12)
+      assertEquals(12, measuredUnplacedController.totalItemsCount)
+      assertFalse(measuredUnplacedController.isPositioned)
+
+      measuredUnplacedState.scrollToIndex(8)
+      assertEquals(8, measuredUnplacedState.currentIndex)
+      assertEquals(8, measuredUnplacedState.snappedIndex)
+
+      measuredUnplacedState.animateScrollToIndex(5)
+      assertEquals(5, measuredUnplacedState.currentIndex)
+      assertEquals(5, measuredUnplacedState.snappedIndex)
+      assertTrue(measuredUnplacedController.animateTargetsRequested.isEmpty())
     }
   }
 
@@ -1306,6 +1335,7 @@ private class FakeWheelScrollController(
   val animateTargetsRequested = mutableListOf<Int>()
   val completedAnimateTargets = mutableListOf<Int>()
 
+  var isPlaced by mutableStateOf(true)
   var pauseAnimations = false
   var emulateRealLazyListAnimateTiming = false
   var supportsNativeWindowTracking = false
@@ -1321,6 +1351,11 @@ private class FakeWheelScrollController(
 
   override var hasVisibleItems by mutableStateOf(false)
     private set
+
+  override val isPositioned: Boolean
+    get() {
+      return isPlaced && (_hadFirstNotEmptyLayout || totalItemsCount > 0)
+    }
 
   override var totalItemsCount by mutableIntStateOf(0)
     private set
