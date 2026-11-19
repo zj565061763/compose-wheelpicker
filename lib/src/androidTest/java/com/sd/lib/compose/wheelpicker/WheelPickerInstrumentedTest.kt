@@ -38,7 +38,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
@@ -201,38 +200,17 @@ class WheelPickerInstrumentedTest {
   @Test
   fun testModalBottomSheetAndMultiFrameOnPreFlingNestedScrollSafety() {
     val state = WheelPickerState(initialIndex = 20)
-    lateinit var composeScope: CoroutineScope
     var preFlingInvoked = false
     var wheelMovingDuringPreFling = false
-    var preFlingSuspendFrames = 4
-    var programmaticJumpTargetDuringPreFling: Int? = null
-    var programmaticJumpStep = 1
-    var animateJumpTargetDuringPreFling: Int? = null
-    var animateCancelledByStaleFling = false
-    var snappedDuringPreFlingJump = -1
     var itemHeightPx = 0
     var touchSlopPx = 0f
 
     val multiFramePreFlingConnection = object : NestedScrollConnection {
       override suspend fun onPreFling(available: Velocity): Velocity {
         preFlingInvoked = true
-        val jumpTarget = programmaticJumpTargetDuringPreFling
-        val jumpStep = programmaticJumpStep
-        val animateTarget = animateJumpTargetDuringPreFling
-        repeat(preFlingSuspendFrames) { step ->
+        repeat(4) {
           withFrameNanos { }
-          if (jumpTarget != null && step == jumpStep) {
-            state.scrollToIndex(jumpTarget)
-            snappedDuringPreFlingJump = state.snappedIndex
-          } else if (animateTarget != null && step == 1) {
-            composeScope.launch {
-              try {
-                state.animateScrollToIndex(animateTarget)
-              } catch (_: kotlinx.coroutines.CancellationException) {
-                animateCancelledByStaleFling = true
-              }
-            }
-          } else if (jumpTarget == null && animateTarget == null && state.isScrollInProgress) {
+          if (state.isScrollInProgress) {
             wheelMovingDuringPreFling = true
           }
         }
@@ -241,7 +219,6 @@ class WheelPickerInstrumentedTest {
     }
 
     composeRule.setContent {
-      composeScope = rememberCoroutineScope()
       val density = LocalDensity.current
       val viewConfiguration = LocalViewConfiguration.current
       itemHeightPx = with(density) { 40.dp.roundToPx() }
@@ -311,190 +288,6 @@ class WheelPickerInstrumentedTest {
     )
     assertEquals(state.currentIndex, state.snappedIndex)
     assertEquals(0f, state.scrollPercentageOf(state.snappedIndex))
-
-    // 父容器 onPreFling 挂起超过 60 帧保护期后再调用 scrollToIndex(60)，恢复的旧 fling 同样不得覆盖 60
-    preFlingInvoked = false
-    preFlingSuspendFrames = 65
-    programmaticJumpTargetDuringPreFling = 60
-    programmaticJumpStep = 62
-
-    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
-      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
-    }
-    composeRule.waitForIdle()
-
-    assertTrue("Expected NestedScrollConnection.onPreFling to be invoked", preFlingInvoked)
-    assertEquals(60, snappedDuringPreFlingJump)
-    assertEquals(60, state.snappedIndex)
-    assertEquals(60, state.currentIndex)
-    assertEquals(0f, state.scrollPercentageOf(60))
-
-    // 父容器 onPreFling 挂起期间启动 animateScrollToIndex(120)，已作废的旧 fling 不得抢占取消飞行中的动画
-    composeRule.runOnUiThread {
-      composeScope.launch {
-        state.scrollToIndex(20)
-      }
-    }
-    composeRule.waitForIdle()
-    assertEquals(20, state.snappedIndex)
-
-    programmaticJumpTargetDuringPreFling = null
-    preFlingSuspendFrames = 4
-    programmaticJumpStep = 1
-    animateJumpTargetDuringPreFling = 120
-    preFlingInvoked = false
-
-    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
-      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
-    }
-    composeRule.waitForIdle()
-
-    assertTrue("Expected NestedScrollConnection.onPreFling to be invoked", preFlingInvoked)
-    assertFalse("Stale fling must not cancel in-flight animateScrollToIndex(120)", animateCancelledByStaleFling)
-    assertEquals(120, state.snappedIndex)
-    assertEquals(120, state.currentIndex)
-    assertEquals(0f, state.scrollPercentageOf(120))
-
-    // 后续新手势仍可正常滑动
-    composeRule.runOnUiThread {
-      composeScope.launch {
-        state.scrollToIndex(60)
-      }
-    }
-    composeRule.waitForIdle()
-    animateJumpTargetDuringPreFling = null
-    preFlingInvoked = false
-
-    composeRule.onNodeWithTag("sheetWheel").performTouchInput {
-      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
-    }
-    composeRule.waitForIdle()
-
-    assertTrue("Expected subsequent gesture NestedScrollConnection.onPreFling to be invoked", preFlingInvoked)
-    assertTrue("Expected subsequent fresh fling to advance past 60, actual=${state.snappedIndex}", state.snappedIndex > 62)
-    assertEquals(state.currentIndex, state.snappedIndex)
-    assertEquals(0f, state.scrollPercentageOf(state.snappedIndex))
-  }
-
-  @Test
-  fun testOutOfOrderPreFlingResumptionDoesNotOverwriteSettledGesture() {
-    val state = WheelPickerState(initialIndex = 20)
-    lateinit var composeScope: CoroutineScope
-    var holdNextPreFling = true
-    var firstPreFlingEntered = CompletableDeferred<Unit>()
-    var releaseFirstPreFling = CompletableDeferred<Unit>()
-    var preFlingCount = 0
-
-    val outOfOrderPreFlingConnection = object : NestedScrollConnection {
-      override suspend fun onPreFling(available: Velocity): Velocity {
-        preFlingCount++
-        if (holdNextPreFling) {
-          holdNextPreFling = false
-          val entered = firstPreFlingEntered
-          val release = releaseFirstPreFling
-          entered.complete(Unit)
-          release.await()
-        } else {
-          withFrameNanos { }
-        }
-        return Velocity.Zero
-      }
-    }
-
-    composeRule.setContent {
-      composeScope = rememberCoroutineScope()
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .nestedScroll(outOfOrderPreFlingConnection),
-      ) {
-        VerticalWheelPicker(
-          modifier = Modifier.testTag("outOfOrderWheel"),
-          count = 150,
-          state = state,
-          itemHeight = 40.dp,
-          unfocusedCount = 2,
-        ) { index ->
-          BasicText(text = "Order-$index")
-        }
-      }
-    }
-
-    composeRule.waitForIdle()
-    assertEquals(20, state.snappedIndex)
-
-    // 1. 第一次手势向上快速滑动并挂起在父容器 onPreFling，随后调用 scrollToIndex(60)，再由第二次手势向下滑停稳后乱序放行第一次 onPreFling
-    composeRule.onNodeWithTag("outOfOrderWheel").performTouchInput {
-      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
-    }
-    composeRule.waitUntil(5_000L) { firstPreFlingEntered.isCompleted }
-    composeRule.waitForIdle()
-    assertEquals(1, preFlingCount)
-
-    composeRule.runOnUiThread {
-      composeScope.launch {
-        state.scrollToIndex(60)
-      }
-    }
-    composeRule.waitForIdle()
-    assertEquals(60, state.snappedIndex)
-    assertEquals(0f, state.scrollPercentageOf(60))
-
-    composeRule.onNodeWithTag("outOfOrderWheel").performTouchInput {
-      swipeDown(startY = top + 10f, endY = bottom - 10f, durationMillis = 200L)
-    }
-    composeRule.waitForIdle()
-    assertEquals(2, preFlingCount)
-    val settledAfterScrollAndSecondGesture = state.snappedIndex
-    assertTrue(
-      "Expected second gesture to settle below 60, actual=$settledAfterScrollAndSecondGesture",
-      settledAfterScrollAndSecondGesture < 60,
-    )
-    assertEquals(settledAfterScrollAndSecondGesture, state.currentIndex)
-    assertEquals(0f, state.scrollPercentageOf(settledAfterScrollAndSecondGesture))
-
-    releaseFirstPreFling.complete(Unit)
-    composeRule.waitForIdle()
-    assertEquals(settledAfterScrollAndSecondGesture, state.snappedIndex)
-    assertEquals(settledAfterScrollAndSecondGesture, state.currentIndex)
-    assertEquals(0f, state.scrollPercentageOf(settledAfterScrollAndSecondGesture))
-
-    // 2. 不经过显式 scrollToIndex，第一次向上滑动挂起在 onPreFling 期间直接执行第二次向下滑动并停稳，乱序放行第一次 onPreFling 同样不得覆盖
-    composeRule.runOnUiThread {
-      composeScope.launch {
-        state.scrollToIndex(60)
-      }
-    }
-    composeRule.waitForIdle()
-    assertEquals(60, state.snappedIndex)
-
-    firstPreFlingEntered = CompletableDeferred()
-    releaseFirstPreFling = CompletableDeferred()
-    holdNextPreFling = true
-
-    composeRule.onNodeWithTag("outOfOrderWheel").performTouchInput {
-      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
-    }
-    composeRule.waitUntil(5_000L) { firstPreFlingEntered.isCompleted }
-    composeRule.waitForIdle()
-    assertEquals(3, preFlingCount)
-
-    composeRule.onNodeWithTag("outOfOrderWheel").performTouchInput {
-      swipeDown(startY = top + 10f, endY = bottom - 10f, durationMillis = 200L)
-    }
-    composeRule.waitForIdle()
-    assertEquals(4, preFlingCount)
-    val settledAfterDirectSecondGesture = state.snappedIndex
-    assertTrue(
-      "Expected direct second gesture to settle below 60, actual=$settledAfterDirectSecondGesture",
-      settledAfterDirectSecondGesture < 60,
-    )
-
-    releaseFirstPreFling.complete(Unit)
-    composeRule.waitForIdle()
-    assertEquals(settledAfterDirectSecondGesture, state.snappedIndex)
-    assertEquals(settledAfterDirectSecondGesture, state.currentIndex)
-    assertEquals(0f, state.scrollPercentageOf(settledAfterDirectSecondGesture))
   }
 
   @Test
@@ -888,22 +681,28 @@ class WheelPickerInstrumentedTest {
   fun testHeadShrinkDuringSuspendedPreFlingPreservesStableKey() {
     var items by mutableStateOf((0..13).toList())
     val state = WheelPickerState(initialIndex = 8)
+    lateinit var composeScope: CoroutineScope
     var itemHeightPx = 0f
     var touchSlopPx = 0f
-    val preFlingEntered = CompletableDeferred<Unit>()
-    val releasePreFling = CompletableDeferred<Unit>()
+    var holdNextPreFling = true
+    var preFlingEntered = CompletableDeferred<Unit>()
+    var releasePreFling = CompletableDeferred<Unit>()
 
     val suspendPreFlingConnection = object : NestedScrollConnection {
       override suspend fun onPreFling(available: Velocity): Velocity {
-        if (!preFlingEntered.isCompleted) {
-          preFlingEntered.complete(Unit)
-          releasePreFling.await()
+        if (holdNextPreFling) {
+          holdNextPreFling = false
+          val entered = preFlingEntered
+          val release = releasePreFling
+          entered.complete(Unit)
+          release.await()
         }
         return Velocity.Zero
       }
     }
 
     composeRule.setContent {
+      composeScope = rememberCoroutineScope()
       val density = LocalDensity.current
       val viewConfig = LocalViewConfiguration.current
       itemHeightPx = with(density) { 48.dp.toPx() }
@@ -931,46 +730,107 @@ class WheelPickerInstrumentedTest {
     assertEquals(8, state.snappedIndex)
     assertEquals(8, items[state.snappedIndex])
 
-    // 轻拖不到半格后松手，使父容器挂起在 onPreFling
-    composeRule.onNodeWithTag("headShrinkWheel").performTouchInput {
-      down(center)
-      val steps = 10
-      val stepDeltaY = -(touchSlopPx + itemHeightPx * 0.25f) / steps
-      repeat(steps) {
-        advanceEventTime(30L)
-        moveBy(Offset(0f, stepDeltaY))
+    try {
+      // 1. 轻拖不到半格后松手，使父容器挂起在 onPreFling（关闭自动推进防止 waitForIdle 直接跑完 60 帧超时）
+      composeRule.mainClock.autoAdvance = false
+      composeRule.onNodeWithTag("headShrinkWheel").performTouchInput {
+        down(center)
+        val steps = 10
+        val stepDeltaY = -(touchSlopPx + itemHeightPx * 0.25f) / steps
+        repeat(steps) {
+          advanceEventTime(30L)
+          moveBy(Offset(0f, stepDeltaY))
+        }
+        advanceEventTime(120L)
+        up()
       }
-      advanceEventTime(120L)
-      up()
+      composeRule.mainClock.advanceTimeByFrame()
+      assertTrue("Expected preFling to be entered", preFlingEntered.isCompleted)
+      assertEquals(8, state.lazyListState.firstVisibleItemIndex)
+      assertTrue(
+        "Expected positive offset < half item, actual=${state.lazyListState.firstVisibleItemScrollOffset}",
+        state.lazyListState.firstVisibleItemScrollOffset in 1..<(itemHeightPx * 0.5f).toInt(),
+      )
+
+      // 在父容器 onPreFling 尚未返回时删除列表开头 6 项，key = 8 从索引 8 移至索引 2，交接完成前 snappedIndex 先夹紧为 7
+      composeRule.runOnUiThread {
+        items = items.drop(6)
+      }
+      composeRule.mainClock.advanceTimeByFrame()
+      composeRule.mainClock.advanceTimeByFrame()
+      assertEquals(7, state.snappedIndex)
+      assertEquals(2, state.lazyListState.firstVisibleItemIndex)
+      assertEquals(2, state.currentIndex)
+
+      // 恢复父容器 onPreFling 后，滚轮应吸附在索引 2（key = 8），而非误选新末项索引 7（key = 13）
+      composeRule.mainClock.autoAdvance = true
+      releasePreFling.complete(Unit)
+      composeRule.waitForIdle()
+
+      assertEquals(2, state.snappedIndex)
+      assertEquals(2, state.currentIndex)
+      assertEquals(8, items[state.snappedIndex])
+      assertEquals(0f, state.scrollPercentageOf(2))
+      composeRule.onNodeWithText("Key-8").assertIsSelected()
+      composeRule.onNodeWithText("Key-8").assertIsDisplayed()
+
+      // 2. 拖到旧索引 6 恰好对齐后松手挂起 onPreFling，删除开头 6 项时 snappedIndex 先夹紧至 7（不误变为 6），交接完成后更新为 0
+      composeRule.runOnUiThread {
+        items = (0..13).toList()
+      }
+      composeRule.waitForIdle()
+      composeRule.runOnUiThread {
+        composeScope.launch {
+          state.scrollToIndex(8)
+        }
+      }
+      composeRule.waitForIdle()
+      assertEquals(8, state.snappedIndex)
+
+      preFlingEntered = CompletableDeferred()
+      releasePreFling = CompletableDeferred()
+      holdNextPreFling = true
+      composeRule.mainClock.autoAdvance = false
+
+      composeRule.onNodeWithTag("headShrinkWheel").performTouchInput {
+        down(center)
+        moveBy(Offset(0f, touchSlopPx))
+        val steps = 10
+        val stepDeltaY = (itemHeightPx * 2f) / steps
+        repeat(steps) {
+          advanceEventTime(30L)
+          moveBy(Offset(0f, stepDeltaY))
+        }
+        advanceEventTime(120L)
+        up()
+      }
+      composeRule.mainClock.advanceTimeByFrame()
+      assertTrue("Expected second preFling to be entered", preFlingEntered.isCompleted)
+      assertEquals(6, state.lazyListState.firstVisibleItemIndex)
+      assertEquals(0, state.lazyListState.firstVisibleItemScrollOffset)
+      assertEquals(8, state.snappedIndex)
+
+      composeRule.runOnUiThread {
+        items = items.drop(6)
+      }
+      composeRule.mainClock.advanceTimeByFrame()
+      composeRule.mainClock.advanceTimeByFrame()
+      assertEquals(7, state.snappedIndex)
+      assertEquals(0, state.lazyListState.firstVisibleItemIndex)
+      assertEquals(0, state.currentIndex)
+
+      composeRule.mainClock.autoAdvance = true
+      releasePreFling.complete(Unit)
+      composeRule.waitForIdle()
+
+      assertEquals(0, state.snappedIndex)
+      assertEquals(0, state.currentIndex)
+      assertEquals(6, items[state.snappedIndex])
+      assertEquals(0f, state.scrollPercentageOf(0))
+      composeRule.onNodeWithText("Key-6").assertIsSelected()
+      composeRule.onNodeWithText("Key-6").assertIsDisplayed()
+    } finally {
+      composeRule.mainClock.autoAdvance = true
     }
-
-    composeRule.waitUntil(timeoutMillis = 5_000L) {
-      preFlingEntered.isCompleted
-    }
-    assertEquals(8, state.lazyListState.firstVisibleItemIndex)
-    assertTrue(
-      "Expected positive offset < half item, actual=${state.lazyListState.firstVisibleItemScrollOffset}",
-      state.lazyListState.firstVisibleItemScrollOffset in 1..<(itemHeightPx * 0.5f).toInt(),
-    )
-
-    // 在父容器 onPreFling 尚未返回时删除列表开头 6 项，key = 8 从索引 8 移至索引 2
-    composeRule.runOnUiThread {
-      items = items.drop(6)
-    }
-    composeRule.waitForIdle()
-    assertTrue("snappedIndex must stay in bounds, actual=${state.snappedIndex}", state.snappedIndex in items.indices)
-    assertEquals(2, state.lazyListState.firstVisibleItemIndex)
-    assertEquals(2, state.currentIndex)
-
-    // 恢复父容器 onPreFling 后，滚轮应吸附在索引 2（key = 8），而非误选新末项索引 7（key = 13）
-    releasePreFling.complete(Unit)
-    composeRule.waitForIdle()
-
-    assertEquals(2, state.snappedIndex)
-    assertEquals(2, state.currentIndex)
-    assertEquals(8, items[state.snappedIndex])
-    assertEquals(0f, state.scrollPercentageOf(2))
-    composeRule.onNodeWithText("Key-8").assertIsSelected()
-    composeRule.onNodeWithText("Key-8").assertIsDisplayed()
   }
 }

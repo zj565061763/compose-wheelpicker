@@ -60,8 +60,8 @@ internal class WheelSnapObserver(
   }
 
   private suspend fun observeFlingHandoffTimeout(owner: Any) {
-    snapshotFlow { store.isAwaitingFlingHandoff }.collectLatest { awaiting ->
-      if (!awaiting) {
+    snapshotFlow { store.awaitingHandoffId }.collectLatest { handoffId ->
+      if (handoffId == 0) {
         return@collectLatest
       }
       val frameClock = currentCoroutineContext()[MonotonicFrameClock]
@@ -72,7 +72,7 @@ internal class WheelSnapObserver(
       } else {
         yield()
       }
-      store.onFlingHandoffResolved(owner)
+      store.onFlingHandoffTimeout(owner = owner, handoffId = handoffId)
     }
   }
 
@@ -91,7 +91,7 @@ internal class WheelSnapObserver(
         attachment = store.attachment,
         isScrollInProgress = scrollController.isScrollInProgress,
         isDragged = store.isDragged,
-        isAwaitingFlingHandoff = store.isAwaitingFlingHandoff,
+        awaitingHandoffId = store.awaitingHandoffId,
         isProgrammaticScrollInFlight = scrollExecutor.isInFlight,
         firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
         firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
@@ -118,7 +118,7 @@ internal class WheelSnapObserver(
         store.updateLastKnownIndexFromLive()
         return@collect
       }
-      if (scrollController.hasVisibleItems && scrollController.totalItemsCount != initialAttachment.count) {
+      if (!store.isLayoutSyncedWith(initialAttachment.count)) {
         lastAutoSnapState = null
         return@collect
       }
@@ -170,7 +170,7 @@ internal class WheelSnapObserver(
           store.clearSnappedIndex()
           return@collect
         }
-        if (scrollController.hasVisibleItems && scrollController.totalItemsCount != currentAttachment.count) {
+        if (!store.isLayoutSyncedWith(currentAttachment.count)) {
           lastAutoSnapState = null
           return@collect
         }
@@ -234,7 +234,7 @@ private data class ObserveSnapshot(
   val attachment: WheelAttachment?,
   val isScrollInProgress: Boolean,
   val isDragged: Boolean,
-  val isAwaitingFlingHandoff: Boolean,
+  val awaitingHandoffId: Int,
   val isProgrammaticScrollInFlight: Boolean,
   val firstVisibleItemIndex: Int,
   val firstVisibleItemScrollOffset: Int,

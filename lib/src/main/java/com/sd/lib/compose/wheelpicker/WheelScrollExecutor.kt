@@ -34,7 +34,7 @@ internal class WheelScrollExecutor(
     index: Int,
     animate: Boolean,
   ) {
-    store.invalidateActiveFlingHandoffs()
+    store.clearAwaitingFlingHandoff()
     val currentAttachment = store.attachment
     if (currentAttachment == null || currentAttachment.count <= 0) {
       val requestedIndex = index.coerceAtLeast(0)
@@ -74,7 +74,7 @@ internal class WheelScrollExecutor(
         if (latestAttachment != null && latestAttachment.count > 0) {
           store.pendingTargetIndex = null
           if (succeeded && scrollController.totalItemsCount > 0) {
-            store.settleCurrentIndexIfAligned()
+            store.settleCurrentIndexIfAligned(isProgrammaticScrollInFlight = isInFlight)
           } else {
             store.updateLastKnownIndexFromLive()
           }
@@ -90,11 +90,10 @@ internal class WheelScrollExecutor(
     }
     if (
       !scrollController.isPositioned ||
-      (scrollController.hasVisibleItems && scrollController.totalItemsCount != currentAttachment.count) ||
-      scrollController.isScrollInProgress ||
-      store.isDragged ||
-      store.isAwaitingFlingHandoff ||
-      isInFlight
+      !store.isIdleAndLayoutSynced(
+        owner = owner,
+        isProgrammaticScrollInFlight = isInFlight,
+      )
     ) {
       return false
     }
@@ -123,7 +122,7 @@ internal class WheelScrollExecutor(
       if (_activeRequestId == requestId) {
         _activeRequestId = 0L
         if (completed) {
-          store.settleCurrentIndexIfAligned()
+          store.settleCurrentIndexIfAligned(isProgrammaticScrollInFlight = isInFlight)
         } else {
           store.updateLastKnownIndexFromLive()
         }

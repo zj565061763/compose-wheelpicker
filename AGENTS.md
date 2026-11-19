@@ -61,14 +61,18 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 交叉轴固有尺寸：只查询 `focus` 槽位，严禁查询底层 `LazyList` 节点（会触发 Compose 异常）。
 - 单实例与空态语义：同一个 `WheelPickerState` 同时只能绑定一个滚轮，未挂载或 `count == 0` 时 `currentIndex` 与 `snappedIndex` 均为 `-1`、`scrollPercentageOf` 返回 `null`。
 - 视觉方向符号：RTL 布局下的水平滚轮与 `reverseLayout = true` 需保持 `scrollPercentageOf` 视觉方向符号一致。
-- 离手衔接保护：禁用默认 `overscrollEffect`，松手或触摸取消时通过 `isAwaitingFlingHandoff` 配合 `NestedScrollConnection`（含 60 帧超时兜底）等待嵌套滚动父容器完成 `onPreFling`，不得提前启动自动吸附截停 fling；显式跳转或后续手势按离手协程 `Job` 独立作废尚未完成交接的旧 fling，防止迟到或乱序恢复的旧交接覆盖新目标或打断新动画。
+- 离手衔接保护：禁用默认 `overscrollEffect`，松手或触摸取消时分配递增交接序号 `awaitingHandoffId` 配合 `NestedScrollConnection`（含按序号匹配的 60 帧超时兜底）等待嵌套滚动父容器完成常规 `onPreFling`，不得提前启动自动吸附截停 fling。
 - 静止自动吸附：停止在非零像素偏移时自动归位至最近条目并更新 `snappedIndex`。
 - 预跳转与无死锁：未挂载、空数据或首次摆放（`onGloballyPositioned`）完成前调用 `scrollToIndex` / `animateScrollToIndex` 不得挂起死锁，通过 `requestScrollToItem` 记录目标并在非空挂载摆放后限制在 `0..<count` 内生效。
-- 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时立即夹紧至 `count - 1`，待新列表完成测量后若实际末项仍残留正偏移且无待交接手势时将偏移归零，避免覆盖底层存活稳定 `key` 锚点。
+- 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时仅将上一轮吸附值立即夹紧至 `count - 1`，待新列表完成测量且手势与离手交接全部结束后再更新 `snappedIndex` 并将实际末项残留正偏移归零，避免交接完成前发布未测量的旧索引或覆盖底层存活稳定 `key` 锚点。
 
 ## 设计取舍与代码审查约定
 
-状态管理、滚动与无障碍语义只对齐官方 `LazyColumn` / `LazyListState` 及 Compose 原生常规边界，以下取舍均属有意设计，代码审查不得作为缺陷或功能缺失报告：
+- 以官方组件为标准：状态管理、滚动、嵌套滚动与无障碍语义统一对齐官方 `LazyColumn`、`LazyListState` 与 `Pager` 的常规边界。
+- 不为极端情况复杂化架构：实现与修复时保持整体设计简洁，不要为了处理极端或人工构造的边界情况改变整体设计、引入复杂机制。
+- 代码审查对齐官方边界：审查以官方组件的行为边界为准，不要求为官方组件同样未处理的极端场景增加兜底。
+
+以下具体取舍均属有意设计，代码审查不得作为缺陷或功能缺失报告：
 
 - `key` 仅做底层透传：`VerticalWheelPicker` 与 `HorizontalWheelPicker` 的 `key` 参数仅透传给底层 `LazyList`（附带 `IndexOutOfBoundsException` 瞬时越界兜底），由 `LazyListState` 原生最近邻窗口（约 ±100 项）保持可见锚点，再由 `WheelSnapObserver` 在静止时同步 `snappedIndex`。
 - 不提供按 `key` 跳转 API：不提供 `scrollToKey` / `animateScrollToKey`，调用方需自行在数据源查找索引后调用 `scrollToIndex` / `animateScrollToIndex`。
@@ -80,8 +84,9 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不做同帧抢跑越界等待：修改数据状态后未等重组就在同一帧调用越界 `scrollToIndex` 时，按调用当下已知的 `count` 直接限制边界，不做跨帧挂起等待；动态扩容后的跳转应在数据生效后的 `LaunchedEffect` 中调用。
 - 不做半格偏移删首项补偿：手势停留在非零像素偏移期间并发删除当前首项时，交由 `LazyList` 原生布局与松手后的自动吸附处理。
 - 不对超大条目跨项动画做像素瞬移裁剪：`animateScrollToIndex` 直接复用官方 `LazyListState.animateScrollToItem`（仅在跨度超过 100 项时瞬移），极端超大 `itemSize` 下跨项像素距离过大导致的动画耗时增长属上游原生行为，不拆分为预跳转加短动画。
+- 不对异常挂起或乱序恢复的父级嵌套滚动做跨协程拦截：嵌套滚动行为与官方 `LazyColumn` / `Pager` 对齐，仅针对 `ModalBottomSheet` 等遵守常规协作契约的父容器在 `onPreFling` 期间延迟自动吸附，不通过 `NestedScrollDispatcher` 追踪或取消外层作用域的离手协程 `Job`，不处理自定义父容器在 `onPreFling` / `onPostFling` 中超长挂死、乱序恢复或挂起期间并发编程式跳转等极端构造场景。
 - 不向内层自定义可点击节点下发选中语义：条目外层 `Box` 通过 `semantics(mergeDescendants = true)` 为常规非交互内容合并暴露 `Selected` 状态，调用方若在 `content` 内自行使用 `Modifier.clickable` 等自带语义合并的交互节点，需按 Compose 规则自行使用 `Modifier.selectable` 声明选中态，库层不新增点击回调或作用域 API。
-- 不支持条目内嵌可滚动子容器的独立嵌套滚动隔离：滚轮条目面向常规展示内容设计，不考虑在 `content` 内嵌 `LazyRow`、`LazyColumn` 等子级滚动容器的场景，外层跳转或手势作废待交接 fling 时不对子级滚动容器做单独区分。
+- 不支持条目内嵌可滚动子容器的独立嵌套滚动隔离：滚轮条目面向常规展示内容设计，不考虑在 `content` 内嵌 `LazyRow`、`LazyColumn` 等子级滚动容器的场景。
 
 ## 测试与仓库规范
 
@@ -92,4 +97,4 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 | 测试类 | 覆盖范围 |
 |---|---|
 | `WheelPickerTest` | `unfocusedCount` 防溢出收缩、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与末项残余偏移归零、常规 `key` 增删重排同步 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧与乱序 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移及 `onPreFling` 挂起期间缩容夹紧与稳定 `key` 保持、重挂载跳转、条目选中无障碍语义更新、已测量未首次摆放时跳转无死锁 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移及 `onPreFling` 挂起期间缩容夹紧与稳定 `key` 保持、重挂载跳转、条目选中无障碍语义更新、已测量未首次摆放时跳转无死锁 |

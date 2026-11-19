@@ -5,9 +5,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import java.util.Collections
-import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.Job
 
 internal data class WheelAttachment(
   val owner: Any,
@@ -21,8 +18,7 @@ internal class WheelPositionStore(
 ) {
   private var _observerOwner: Any? = null
   private var _hasFlingGuard = false
-  private var _activeFlingJobsProvider: (() -> Sequence<Job>)? = null
-  private val _invalidatedFlingJobs: MutableSet<Job> = Collections.newSetFromMap(ConcurrentHashMap())
+  private var _nextHandoffId = 0
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
 
@@ -36,8 +32,13 @@ internal class WheelPositionStore(
   var isDragged by mutableStateOf(false)
     private set
 
-  var isAwaitingFlingHandoff by mutableStateOf(false)
+  var awaitingHandoffId by mutableIntStateOf(0)
     private set
+
+  val isAwaitingFlingHandoff: Boolean
+    get() {
+      return awaitingHandoffId != 0
+    }
 
   var snappedIndex by mutableIntStateOf(-1)
     private set
@@ -54,6 +55,27 @@ internal class WheelPositionStore(
         itemSizePx = current.itemSizePx,
       )
     }
+  }
+
+  /** 判断底层可见项测量总数是否已与[expectedCount]同步 */
+  fun isLayoutSyncedWith(expectedCount: Int): Boolean {
+    return !scrollController.hasVisibleItems || scrollController.totalItemsCount == expectedCount
+  }
+
+  /** 判断滚轮是否归属[owner]、处于静止无待决手势状态且布局已与当前条目数同步 */
+  fun isIdleAndLayoutSynced(
+    owner: Any? = attachment?.owner,
+    isProgrammaticScrollInFlight: Boolean = false,
+  ): Boolean {
+    val current = attachment
+    if (current == null || current.owner !== owner || current.count <= 0) {
+      return false
+    }
+    return !scrollController.isScrollInProgress &&
+      !isProgrammaticScrollInFlight &&
+      !isDragged &&
+      !isAwaitingFlingHandoff &&
+      isLayoutSyncedWith(current.count)
   }
 
   fun scrollPercentageOf(index: Int): Float? {
@@ -88,7 +110,7 @@ internal class WheelPositionStore(
     if (_observerOwner === owner) {
       _observerOwner = null
       isDragged = false
-      isAwaitingFlingHandoff = false
+      awaitingHandoffId = 0
     }
   }
 
@@ -98,7 +120,7 @@ internal class WheelPositionStore(
   ) {
     if (_observerOwner === owner) {
       if (dragged) {
-        isAwaitingFlingHandoff = false
+        awaitingHandoffId = 0
       }
       if (isDragged != dragged) {
         isDragged = dragged
@@ -106,52 +128,32 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 拖拽结束且启用离手保护时分配非零递增序号进入交接等待 */
   fun onDragStoppedAwaitingFling(owner: Any) {
     if (_observerOwner === owner && _hasFlingGuard) {
-      isAwaitingFlingHandoff = true
+      val nextId = _nextHandoffId + 1
+      _nextHandoffId = if (nextId == 0) 1 else nextId
+      awaitingHandoffId = _nextHandoffId
     }
   }
 
-  /** 用户手势产生滚动增量时作废此前尚未完成交接的旧离手协程 */
-  fun onUserPreScroll(owner: Any) {
-    if (attachment?.owner === owner || _observerOwner === owner) {
-      invalidateActiveFlingHandoffs()
-    }
-  }
-
-  /** 作废当前嵌套滚动作用域内尚未结束的离手协程，防止迟到或乱序恢复的旧 fling 覆盖最新目标 */
-  fun invalidateActiveFlingHandoffs() {
-    if (isAwaitingFlingHandoff) {
-      isAwaitingFlingHandoff = false
-    }
-    val jobs = _activeFlingJobsProvider?.invoke() ?: return
-    for (job in jobs) {
-      if (job.isActive && _invalidatedFlingJobs.add(job)) {
-        job.invokeOnCompletion {
-          _invalidatedFlingJobs.remove(job)
-        }
-      }
-    }
-  }
-
-  /** 校验离手协程是否仍有效，返回 true 表示该离手交接已作废需立即取消 */
-  fun onPreFlingHandoff(
-    owner: Any,
-    flingJob: Job?,
-  ): Boolean {
-    if (attachment?.owner !== owner && _observerOwner !== owner) {
-      return true
-    }
-    if (flingJob != null && _invalidatedFlingJobs.remove(flingJob)) {
-      return true
-    }
-    isAwaitingFlingHandoff = false
-    return false
+  fun clearAwaitingFlingHandoff() {
+    awaitingHandoffId = 0
   }
 
   fun onFlingHandoffResolved(owner: Any) {
     if (attachment?.owner === owner || _observerOwner === owner) {
-      isAwaitingFlingHandoff = false
+      awaitingHandoffId = 0
+    }
+  }
+
+  /** 仅当当前等待序号仍匹配[handoffId]时解除离手超时保护 */
+  fun onFlingHandoffTimeout(
+    owner: Any,
+    handoffId: Int,
+  ) {
+    if ((attachment?.owner === owner || _observerOwner === owner) && awaitingHandoffId == handoffId) {
+      awaitingHandoffId = 0
     }
   }
 
@@ -162,19 +164,16 @@ internal class WheelPositionStore(
     itemSizePx: Int,
     reverseVisualDirection: Boolean,
     flingGuardEnabled: Boolean,
-    isProgrammaticScrollInFlight: Boolean,
-    activeFlingJobsProvider: (() -> Sequence<Job>)? = null,
   ) {
     val previousAttachment = attachment
     if (previousAttachment != null && previousAttachment.owner !== owner) {
-      invalidateActiveFlingHandoffs()
+      awaitingHandoffId = 0
     }
     _unfocusedCount = unfocusedCount
     _reverseVisualDirection = reverseVisualDirection
-    _activeFlingJobsProvider = activeFlingJobsProvider
     _hasFlingGuard = flingGuardEnabled && count > 0
     if (!_hasFlingGuard) {
-      invalidateActiveFlingHandoffs()
+      awaitingHandoffId = 0
     }
 
     if (count <= 0) {
@@ -182,7 +181,8 @@ internal class WheelPositionStore(
         previousAttachment != null &&
         previousAttachment.count > 0 &&
         pendingTargetIndex == null &&
-        scrollController.totalItemsCount > 0
+        scrollController.totalItemsCount > 0 &&
+        isLayoutSyncedWith(previousAttachment.count)
       ) {
         val lastIndex = currentIndex
         if (lastIndex >= 0) {
@@ -205,7 +205,8 @@ internal class WheelPositionStore(
         previousAttachment.owner !== owner &&
         previousAttachment.count > 0 &&
         pendingTargetIndex == null &&
-        scrollController.totalItemsCount > 0
+        scrollController.totalItemsCount > 0 &&
+        isLayoutSyncedWith(previousAttachment.count)
       ) {
         val liveIndex = currentIndex
         if (liveIndex >= 0) {
@@ -234,11 +235,7 @@ internal class WheelPositionStore(
       return
     }
 
-    if (!scrollController.isScrollInProgress && !isProgrammaticScrollInFlight) {
-      if (snappedIndex !in 0..<count) {
-        settleCurrentIndexIfAligned()
-      }
-    }
+    // 缩容时仅将上一轮越界的吸附索引夹紧至新边界，待新列表完成测量且交接结束后再按实际位置结算
     if (snappedIndex >= count) {
       val clamped = count - 1
       snappedIndex = clamped
@@ -251,15 +248,19 @@ internal class WheelPositionStore(
     if (current?.owner !== owner) {
       return false
     }
-    if (current.count > 0 && pendingTargetIndex == null && scrollController.totalItemsCount > 0) {
+    if (
+      current.count > 0 &&
+      pendingTargetIndex == null &&
+      scrollController.totalItemsCount > 0 &&
+      isLayoutSyncedWith(current.count)
+    ) {
       val lastIndex = currentIndex
       if (lastIndex >= 0) {
         lastKnownIndex = lastIndex
       }
     }
     _hasFlingGuard = false
-    invalidateActiveFlingHandoffs()
-    _activeFlingJobsProvider = null
+    awaitingHandoffId = 0
     attachment = null
     snappedIndex = -1
     return true
@@ -279,7 +280,7 @@ internal class WheelPositionStore(
       current != null &&
       current.count > 0 &&
       scrollController.totalItemsCount > 0 &&
-      (!scrollController.hasVisibleItems || scrollController.totalItemsCount == current.count)
+      isLayoutSyncedWith(current.count)
     ) {
       val liveIndex = currentIndex
       if (liveIndex >= 0) {
@@ -293,17 +294,13 @@ internal class WheelPositionStore(
     owner: Any,
     isProgrammaticScrollInFlight: Boolean,
   ) {
-    val current = attachment
-    if (current?.owner !== owner || current.count <= 0) {
-      return
-    }
+    val current = attachment ?: return
     if (
-      !scrollController.isScrollInProgress &&
-      !isProgrammaticScrollInFlight &&
-      !isDragged &&
-      !isAwaitingFlingHandoff &&
+      isIdleAndLayoutSynced(
+        owner = owner,
+        isProgrammaticScrollInFlight = isProgrammaticScrollInFlight,
+      ) &&
       scrollController.hasVisibleItems &&
-      scrollController.totalItemsCount == current.count &&
       scrollController.firstVisibleItemIndex >= current.count - 1 &&
       scrollController.firstVisibleItemScrollOffset > 0
     ) {
@@ -324,10 +321,12 @@ internal class WheelPositionStore(
       snappedIndex = -1
       return
     }
-    if (isProgrammaticScrollInFlight || scrollController.isScrollInProgress) {
-      return
-    }
-    if (scrollController.hasVisibleItems && scrollController.totalItemsCount != finalAttachment.count) {
+    if (
+      !isIdleAndLayoutSynced(
+        owner = owner,
+        isProgrammaticScrollInFlight = isProgrammaticScrollInFlight,
+      )
+    ) {
       return
     }
     val settled = currentIndex
@@ -337,8 +336,8 @@ internal class WheelPositionStore(
     }
   }
 
-  fun settleCurrentIndexIfAligned() {
-    if (scrollController.isScrollInProgress) {
+  fun settleCurrentIndexIfAligned(isProgrammaticScrollInFlight: Boolean = false) {
+    if (!isIdleAndLayoutSynced(isProgrammaticScrollInFlight = isProgrammaticScrollInFlight)) {
       return
     }
     if (scrollController.hasVisibleItems && scrollController.firstVisibleItemScrollOffset != 0) {
@@ -361,7 +360,7 @@ internal class WheelPositionStore(
       current != null &&
       current.count > 0 &&
       scrollController.totalItemsCount > 0 &&
-      (!scrollController.hasVisibleItems || scrollController.totalItemsCount == current.count)
+      isLayoutSyncedWith(current.count)
     ) {
       val live = currentIndex
       if (live >= 0) {
