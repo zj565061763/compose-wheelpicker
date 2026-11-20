@@ -104,8 +104,13 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 绑定[owner]观察会话，切换持有者时清理残留拖拽与离手等待状态 */
   fun onObserverAttached(owner: Any) {
-    _observerOwner = owner
+    if (_observerOwner !== owner) {
+      _observerOwner = owner
+      isDragged = false
+      awaitingHandoffId = 0
+    }
   }
 
   /** 解绑[owner]观察会话并清理残留拖拽与离手等待状态 */
@@ -173,6 +178,7 @@ internal class WheelPositionStore(
   ) {
     val previousAttachment = attachment
     if (previousAttachment == null || previousAttachment.owner !== owner) {
+      isDragged = false
       awaitingHandoffId = 0
       scrollController.resetPositioned()
     }
@@ -268,6 +274,7 @@ internal class WheelPositionStore(
       }
     }
     _hasFlingGuard = false
+    isDragged = false
     awaitingHandoffId = 0
     scrollController.resetPositioned()
     attachment = null

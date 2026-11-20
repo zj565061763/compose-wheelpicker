@@ -189,6 +189,10 @@ internal class WheelSnapObserver(
           lastAutoSnapState = null
           break
         }
+        if (!scrollController.isPositioned) {
+          lastAutoSnapState = null
+          return@collect
+        }
 
         val snapState = AutoSnapState(
           firstVisibleItemIndex = scrollController.firstVisibleItemIndex,

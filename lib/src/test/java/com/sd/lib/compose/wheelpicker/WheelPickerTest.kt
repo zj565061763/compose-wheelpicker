@@ -1153,6 +1153,193 @@ class WheelPickerTest {
       }
     }
   }
+
+  @Test
+  fun testOwnerSwitchAndDetachDuringDragResetsDraggedState() {
+    runBlocking {
+      // 验证公开默认与带参构造函数正常创建及保存初始索引
+      val defaultState = WheelPickerState()
+      val savedDefault = with(WheelPickerState.Saver) {
+        SaverScope { true }.save(defaultState)
+      }
+      assertEquals(0, savedDefault)
+
+      val controller = FakeWheelScrollController(initialIndex = 1)
+      val state = WheelPickerState(initialIndex = 1, scrollController = controller)
+      val ownerA = Any()
+      val ownerB = Any()
+      val ownerC = Any()
+
+      state.updateAttachment(
+        owner = ownerA,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+        flingGuardEnabled = true,
+      )
+      controller.applyMeasure(count = 10)
+
+      val observerJobA = launch(start = CoroutineStart.UNDISPATCHED) {
+        state.observeSnappedIndex(ownerA)
+      }
+      Snapshot.sendApplyNotifications()
+      repeat(3) {
+        yield()
+      }
+      assertEquals(1, state.snappedIndex)
+
+      // ownerA 处于拖拽与非零偏移期间，同帧切换至 ownerB，且新观察协程先于旧观察协程 finally 执行
+      controller.emitDragStart()
+      controller.setPositionInScroll(index = 2, offset = 20)
+      Snapshot.sendApplyNotifications()
+      repeat(3) {
+        yield()
+      }
+      assertEquals(1, state.snappedIndex)
+
+      state.updateAttachment(
+        owner = ownerB,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+        flingGuardEnabled = true,
+      )
+      val observerJobB = launch(start = CoroutineStart.UNDISPATCHED) {
+        state.observeSnappedIndex(ownerB)
+      }
+      observerJobA.cancel()
+      observerJobA.join()
+      controller.applyMeasure(count = 10)
+      Snapshot.sendApplyNotifications()
+      repeat(4) {
+        yield()
+      }
+
+      // 切换后编程式跳转能正常结算 snappedIndex，非零偏移能正常触发自动吸附
+      state.scrollToIndex(6)
+      assertEquals(6, state.snappedIndex)
+
+      controller.setPositionInScroll(index = 3, offset = 30)
+      Snapshot.sendApplyNotifications()
+      repeat(6) {
+        yield()
+      }
+      assertEquals(0, controller.firstVisibleItemScrollOffset)
+      assertEquals(4, state.snappedIndex)
+
+      // 拖拽期间直接卸载 ownerB，后续重挂载 ownerC 时不残留拖拽阻塞
+      controller.emitDragStart()
+      Snapshot.sendApplyNotifications()
+      repeat(2) {
+        yield()
+      }
+      state.detach(ownerB)
+      observerJobB.cancel()
+      observerJobB.join()
+
+      state.updateAttachment(
+        owner = ownerC,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+        flingGuardEnabled = true,
+      )
+      controller.applyMeasure(count = 10)
+      state.scrollToIndex(8)
+      assertEquals(8, state.snappedIndex)
+    }
+  }
+
+  @Test
+  fun testUnpositionedNonZeroOffsetDoesNotSpinAndSnapsOncePositioned() {
+    runBlocking {
+      // 1. 有帧时钟时，未摆放且存在非零偏移不得每帧唤醒空转，摆放完成后自动完成吸附
+      val framedController = FakeWheelScrollController(initialIndex = 2).also {
+        it.isPlaced = false
+      }
+      val framedState = WheelPickerState(initialIndex = 2, scrollController = framedController)
+      val framedOwner = Any()
+      val clock = BroadcastFrameClock()
+
+      framedState.updateAttachment(
+        owner = framedOwner,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+      )
+      framedController.applyMeasure(count = 10)
+      framedController.setPositionInScroll(index = 2, offset = 30)
+      assertFalse(framedController.isPositioned)
+
+      val framedObserverJob = launch(clock, start = CoroutineStart.UNDISPATCHED) {
+        framedState.observeSnappedIndex(framedOwner)
+      }
+      try {
+        Snapshot.sendApplyNotifications()
+        repeat(5) {
+          yield()
+        }
+        assertFalse(clock.hasAwaiters)
+        assertTrue(framedController.animateTargetsRequested.isEmpty())
+        assertEquals(30, framedController.firstVisibleItemScrollOffset)
+
+        framedController.isPlaced = true
+        Snapshot.sendApplyNotifications()
+        repeat(6) {
+          yield()
+        }
+        assertEquals(listOf(3), framedController.animateTargetsRequested)
+        assertEquals(0, framedController.firstVisibleItemScrollOffset)
+        assertEquals(3, framedState.snappedIndex)
+      } finally {
+        framedObserverJob.cancel()
+        framedObserverJob.join()
+      }
+
+      // 2. 无帧时钟时，未摆放且存在非零偏移不得陷入 yield 忙等循环，摆放完成后正常吸附
+      val clocklessController = FakeWheelScrollController(initialIndex = 1).also {
+        it.isPlaced = false
+      }
+      val clocklessState = WheelPickerState(initialIndex = 1, scrollController = clocklessController)
+      val clocklessOwner = Any()
+
+      clocklessState.updateAttachment(
+        owner = clocklessOwner,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+      )
+      clocklessController.applyMeasure(count = 10)
+      clocklessController.setPositionInScroll(index = 1, offset = 28)
+
+      val clocklessObserverJob = launch(start = CoroutineStart.UNDISPATCHED) {
+        clocklessState.observeSnappedIndex(clocklessOwner)
+      }
+      try {
+        Snapshot.sendApplyNotifications()
+        repeat(4) {
+          yield()
+        }
+        clocklessController.isPositionedReadCount = 0
+        repeat(20) {
+          yield()
+        }
+        assertEquals(0, clocklessController.isPositionedReadCount)
+        assertEquals(28, clocklessController.firstVisibleItemScrollOffset)
+
+        clocklessController.isPlaced = true
+        Snapshot.sendApplyNotifications()
+        repeat(6) {
+          yield()
+        }
+        assertEquals(0, clocklessController.firstVisibleItemScrollOffset)
+        assertEquals(2, clocklessState.snappedIndex)
+      } finally {
+        clocklessObserverJob.cancel()
+        clocklessObserverJob.join()
+      }
+    }
+  }
 }
 
 private class EmptyApplier : AbstractApplier<Unit>(Unit) {
@@ -1403,8 +1590,11 @@ private class FakeWheelScrollController(
   override var hasVisibleItems by mutableStateOf(false)
     private set
 
+  var isPositionedReadCount = 0
+
   override val isPositioned: Boolean
     get() {
+      isPositionedReadCount++
       return isPlaced && _hasCurrentMountLayout
     }
 

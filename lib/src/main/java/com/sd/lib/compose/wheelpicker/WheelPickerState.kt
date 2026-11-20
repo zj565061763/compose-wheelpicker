@@ -36,7 +36,8 @@ class WheelPickerState internal constructor(
   initialIndex: Int,
   scrollController: WheelScrollController?,
 ) {
-  internal constructor(initialIndex: Int) : this(
+  /** 创建滚轮状态，[initialIndex]为首次创建时的初始索引 */
+  constructor(initialIndex: Int = 0) : this(
     initialIndex = initialIndex,
     scrollController = null,
   )
