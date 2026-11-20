@@ -42,6 +42,7 @@ fun WheelPickerFocusHorizontal(
   )
 }
 
+/** 按滚轮方向在焦点区域两侧边缘绘制分割线 */
 @Composable
 private fun WheelPickerFocusIndicator(
   modifier: Modifier = Modifier,

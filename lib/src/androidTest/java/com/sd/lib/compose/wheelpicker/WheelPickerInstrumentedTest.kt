@@ -361,6 +361,12 @@ class WheelPickerInstrumentedTest {
               thickness = 0.dp,
             )
           },
+          display = { index ->
+            DefaultWheelPickerDisplay(
+              modifier = Modifier.testTag("rtlDisplay-$index"),
+              index = index,
+            )
+          },
         ) { index ->
           BasicText(text = "RTL-$index")
         }
@@ -377,6 +383,7 @@ class WheelPickerInstrumentedTest {
     composeRule.waitForIdle()
     composeRule.onNodeWithTag("focusHorizontalZero").assertIsDisplayed()
     composeRule.onNodeWithTag("focusVerticalTransparent").assertIsDisplayed()
+    composeRule.onNodeWithTag("rtlDisplay-2", useUnmergedTree = true).assertIsDisplayed()
 
     val centerPct = rtlState.scrollPercentageOf(2)!!
     val visualRightPct = rtlState.scrollPercentageOf(1)!!

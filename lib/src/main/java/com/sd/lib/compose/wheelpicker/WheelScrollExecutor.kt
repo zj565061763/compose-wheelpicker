@@ -24,12 +24,14 @@ internal class WheelScrollExecutor(
       return _activeRequestId != 0L
     }
 
+  /** 取消当前进行中的编程式滚动或自动吸附任务 */
   fun cancelActiveScroll() {
     _activeRequestId = 0L
     _activeScrollJob?.cancel()
     _activeScrollJob = null
   }
 
+  /** 执行跳转到[index]，未挂载、空数据或首次摆放前直接记录目标而不挂起，运行中支持并发抢占 */
   suspend fun scrollToIndex(
     index: Int,
     animate: Boolean,
@@ -83,6 +85,7 @@ internal class WheelScrollExecutor(
     }
   }
 
+  /** 静止且停留在非零像素偏移时归位至最近条目，返回是否正常完成 */
   suspend fun performAutoSnap(owner: Any): Boolean {
     val currentAttachment = store.attachment
     if (currentAttachment?.owner !== owner || currentAttachment.count <= 0) {
@@ -130,6 +133,7 @@ internal class WheelScrollExecutor(
     }
   }
 
+  /** 启动可取消的底层滚动步骤，组件仍有效但步骤被抢占中断时抛出[CancellationException] */
   private suspend fun runScrollStep(
     targetIndex: Int,
     animate: Boolean,

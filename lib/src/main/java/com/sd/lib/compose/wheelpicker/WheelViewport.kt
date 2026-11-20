@@ -83,6 +83,7 @@ internal class WheelViewportState(
   var shouldClip by mutableStateOf(false)
     private set
 
+  /** 按最近一次主轴约束像素上限计算安全的单侧未选中条目数 */
   fun resolveUnfocusedCount(
     itemSizePx: Int,
     requestedUnfocusedCount: Int,
@@ -94,6 +95,7 @@ internal class WheelViewportState(
     )
   }
 
+  /** 记录主轴约束上限，收缩单侧未选中条目数并更新首尾内边距 */
   fun onMeasure(
     orientation: WheelOrientation,
     density: Density,
@@ -162,6 +164,7 @@ private class WheelPaddingValues(
   }
 }
 
+/** 承载滚轮列表与中心焦点槽位，空间不足时自动开启绘制裁剪 */
 @Composable
 internal fun WheelViewportBox(
   modifier: Modifier = Modifier,
@@ -199,6 +202,7 @@ internal fun WheelViewportBox(
   )
 }
 
+/** 创建视口测量策略，自适应收缩主轴尺寸并仅通过焦点槽位查询交叉轴固有尺寸 */
 internal fun createWheelViewportMeasurePolicy(
   orientation: WheelOrientation,
   itemSizePx: Int,
@@ -379,6 +383,7 @@ internal fun resolveWheelItemSizePx(
   return rawPx.coerceIn(1, MAX_CONSTRAINT_AXIS_PX)
 }
 
+/** 将单个条目主轴尺寸固定为限制在父约束内的[sizePx] */
 internal fun Modifier.itemMainAxisSize(
   orientation: WheelOrientation,
   sizePx: Int,
@@ -410,6 +415,7 @@ internal fun Modifier.itemMainAxisSize(
   }
 }
 
+/** 根据主轴可用空间与单轴上限计算不发生溢出的单侧未选中条目数 */
 internal fun calculateSafeUnfocusedCount(
   maxSizePx: Int,
   itemSizePx: Int,
@@ -431,6 +437,7 @@ internal fun calculateSafeUnfocusedCount(
   return minOf(unfocusedCount, maxBySpace)
 }
 
+/** 按首项滚动偏移过半规则计算当前靠近中心的条目索引 */
 internal fun calculateSnappedIndex(
   firstVisibleItemIndex: Int,
   firstVisibleItemScrollOffset: Int,
@@ -448,6 +455,7 @@ internal fun calculateSnappedIndex(
   return rounded.coerceIn(0, count - 1)
 }
 
+/** 计算[index]相对中心焦点的归一化偏移比例，[reverseDirection]为true时翻转符号 */
 internal fun calculateScrollPercentage(
   index: Int,
   firstVisibleItemIndex: Int,

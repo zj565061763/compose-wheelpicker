@@ -25,10 +25,11 @@ interface WheelPickerDisplayScope {
 /** 默认条目展示效果，随偏离中心程度缩小并降低透明度 */
 @Composable
 fun WheelPickerDisplayScope.DefaultWheelPickerDisplay(
+  modifier: Modifier = Modifier,
   index: Int,
 ) {
   Box(
-    modifier = Modifier.graphicsLayer {
+    modifier = modifier.graphicsLayer {
       val percentage = state.scrollPercentageOf(index)
       val factor = if (percentage != null) {
         (1f - abs(percentage)).coerceIn(0.5f, 1f)
@@ -45,6 +46,7 @@ fun WheelPickerDisplayScope.DefaultWheelPickerDisplay(
   }
 }
 
+/** 记住最新展示与内容回调，稳定条目作用域实例 */
 @Composable
 internal fun rememberWheelPickerDisplayHolder(
   state: WheelPickerState,

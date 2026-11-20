@@ -55,7 +55,7 @@ fun VerticalWheelPicker(
   userScrollEnabled: Boolean = true,
   reverseLayout: Boolean = false,
   focus: @Composable () -> Unit = { WheelPickerFocusVertical() },
-  display: @Composable WheelPickerDisplayScope.(index: Int) -> Unit = { DefaultWheelPickerDisplay(it) },
+  display: @Composable WheelPickerDisplayScope.(index: Int) -> Unit = { DefaultWheelPickerDisplay(index = it) },
   content: @Composable (index: Int) -> Unit,
 ) {
   WheelPicker(
@@ -102,7 +102,7 @@ fun HorizontalWheelPicker(
   userScrollEnabled: Boolean = true,
   reverseLayout: Boolean = false,
   focus: @Composable () -> Unit = { WheelPickerFocusHorizontal() },
-  display: @Composable WheelPickerDisplayScope.(index: Int) -> Unit = { DefaultWheelPickerDisplay(it) },
+  display: @Composable WheelPickerDisplayScope.(index: Int) -> Unit = { DefaultWheelPickerDisplay(index = it) },
   content: @Composable (index: Int) -> Unit,
 ) {
   WheelPicker(
@@ -121,6 +121,7 @@ fun HorizontalWheelPicker(
   )
 }
 
+/** 校验滚轮参数，协调视口自适应、状态挂载、离手保护与列表渲染 */
 @Composable
 private fun WheelPicker(
   modifier: Modifier = Modifier,
@@ -279,6 +280,7 @@ private fun WheelPicker(
   )
 }
 
+/** 按滚轮方向构建禁用默认回弹效果的[LazyColumn]或[LazyRow] */
 @Composable
 private fun WheelLazyList(
   modifier: Modifier = Modifier,

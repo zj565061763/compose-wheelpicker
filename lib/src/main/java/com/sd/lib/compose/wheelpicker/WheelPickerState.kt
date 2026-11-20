@@ -119,6 +119,7 @@ class WheelPickerState internal constructor(
     _store.onFlingHandoffResolved(owner)
   }
 
+  /** 同步组件挂载参数，空列表或切换持有者时取消活跃滚动 */
   internal fun updateAttachment(
     owner: Any,
     count: Int,
@@ -141,6 +142,7 @@ class WheelPickerState internal constructor(
     )
   }
 
+  /** 解绑[owner]并在成功卸载时取消活跃滚动 */
   internal fun detach(owner: Any) {
     if (_store.detach(owner)) {
       _scrollExecutor.cancelActiveScroll()

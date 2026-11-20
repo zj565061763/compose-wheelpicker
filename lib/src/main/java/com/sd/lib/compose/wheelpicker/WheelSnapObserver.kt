@@ -18,6 +18,7 @@ internal class WheelSnapObserver(
   private val scrollExecutor: WheelScrollExecutor,
   private val scrollController: WheelScrollController,
 ) {
+  /** 绑定[owner]观察会话，监听拖拽交互、离手交接超时与静止自动吸附 */
   suspend fun observe(owner: Any) {
     store.onObserverAttached(owner)
     try {
@@ -59,6 +60,7 @@ internal class WheelSnapObserver(
     }
   }
 
+  /** 监听离手交接序号，超过最大保护帧数仍未回调时兜底解除等待 */
   private suspend fun observeFlingHandoffTimeout(owner: Any) {
     snapshotFlow { store.awaitingHandoffId }.collectLatest { handoffId ->
       if (handoffId == 0) {
@@ -76,6 +78,7 @@ internal class WheelSnapObserver(
     }
   }
 
+  /** 判断滚轮是否处于滚动、拖拽、离手交接等待或编程式跳转中 */
   private fun isBusy(): Boolean {
     return scrollController.isScrollInProgress ||
       store.isDragged ||
@@ -83,6 +86,7 @@ internal class WheelSnapObserver(
       scrollExecutor.isInFlight
   }
 
+  /** 观察滚轮快照变化，静止且布局同步后处理末项残余偏移、自动吸附并结算吸附索引 */
   private suspend fun observeScrollAndSnap(owner: Any) {
     var wasActiveGestureOrScroll = false
     var lastAutoSnapState: AutoSnapState? = null
@@ -213,6 +217,7 @@ internal class WheelSnapObserver(
     }
   }
 
+  /** 挂起等待滚轮恢复空闲或[owner]失效，返回恢复后[owner]是否仍有效非空 */
   private suspend fun awaitIdle(owner: Any): Boolean {
     snapshotFlow {
       val currentAttachment = store.attachment

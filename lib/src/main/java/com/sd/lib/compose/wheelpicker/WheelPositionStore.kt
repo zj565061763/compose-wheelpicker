@@ -78,6 +78,7 @@ internal class WheelPositionStore(
       isLayoutSyncedWith(current.count)
   }
 
+  /** 计算[index]相对中心焦点的视觉偏移比例，未挂载或空数据时返回null */
   fun scrollPercentageOf(index: Int): Float? {
     val current = attachment
     if (current == null || current.count <= 0) {
@@ -93,6 +94,7 @@ internal class WheelPositionStore(
     )
   }
 
+  /** 同步[owner]实际测量生效的单侧未选中条目数 */
   fun updateViewportUnfocusedCount(
     owner: Any,
     unfocusedCount: Int,
@@ -106,6 +108,7 @@ internal class WheelPositionStore(
     _observerOwner = owner
   }
 
+  /** 解绑[owner]观察会话并清理残留拖拽与离手等待状态 */
   fun onObserverDetached(owner: Any) {
     if (_observerOwner === owner) {
       _observerOwner = null
@@ -114,6 +117,7 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 更新[owner]拖拽状态，开始新拖拽时清除上一轮离手交接等待 */
   fun updateDragged(
     owner: Any,
     dragged: Boolean,
@@ -141,6 +145,7 @@ internal class WheelPositionStore(
     awaitingHandoffId = 0
   }
 
+  /** 嵌套滚动交接完成时解除[owner]的离手等待 */
   fun onFlingHandoffResolved(owner: Any) {
     if (attachment?.owner === owner || _observerOwner === owner) {
       awaitingHandoffId = 0
@@ -157,6 +162,7 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 同步组件挂载参数，处理空列表过渡、重挂载位置恢复与缩容越界夹紧 */
   fun updateAttachment(
     owner: Any,
     count: Int,
@@ -244,6 +250,7 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 卸载[owner]绑定的滚轮，保存最近有效索引并重置挂载与吸附状态 */
   fun detach(owner: Any): Boolean {
     val current = attachment
     if (current?.owner !== owner) {
@@ -276,6 +283,7 @@ internal class WheelPositionStore(
     snappedIndex = index
   }
 
+  /** 布局已同步时将实时中心索引记录为最近已知位置 */
   fun updateLastKnownIndexFromLive() {
     val current = attachment
     if (
@@ -311,6 +319,7 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 滚轮静止且布局同步后按当前中心条目结算吸附索引 */
   fun onIdleSettled(
     owner: Any,
     isProgrammaticScrollInFlight: Boolean,
@@ -338,6 +347,7 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 滚轮静止且首项零像素偏移对齐时结算吸附索引 */
   fun settleCurrentIndexIfAligned(isProgrammaticScrollInFlight: Boolean = false) {
     if (!isIdleAndLayoutSynced(isProgrammaticScrollInFlight = isProgrammaticScrollInFlight)) {
       return
@@ -352,6 +362,7 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 按待生效目标、实时中心项或最近已知位置返回待保存索引 */
   fun saveIndex(): Int {
     val pending = pendingTargetIndex
     if (pending != null) {
