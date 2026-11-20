@@ -1553,6 +1553,36 @@ class WheelPickerTest {
         harness.stepFrame()
         assertEquals(0, countInvocationCount)
         assertEquals(5, state.snappedIndex)
+
+        // 4. 选中第 4 项（index = 3）后，同一回调清空或缩容列表立即读取公开状态即返回空态或夹紧值，回填后恢复至 3
+        state.scrollToIndex(3)
+        assertEquals(3, state.snappedIndex)
+
+        stateList.removeRange(2, 10)
+        assertEquals(1, state.currentIndex)
+        assertEquals(1, state.snappedIndex)
+        assertEquals("Refilled-1", stateList[state.snappedIndex])
+        harness.stepFrame()
+
+        stateList.clear()
+        repeat(10) { stateList.add("Third-$it") }
+        harness.stepFrame()
+        state.scrollToIndex(3)
+        assertEquals(3, state.snappedIndex)
+
+        stateList.clear()
+        assertEquals(-1, state.currentIndex)
+        assertEquals(-1, state.snappedIndex)
+        assertNull(state.scrollPercentageOf(3))
+
+        harness.stepFrame()
+        assertEquals(-1, state.snappedIndex)
+
+        repeat(10) { stateList.add("Restored-$it") }
+        harness.stepFrame()
+        assertEquals(3, state.currentIndex)
+        assertEquals(3, state.snappedIndex)
+        assertEquals("Restored-3", stateList[state.snappedIndex])
       } finally {
         harness.dispose()
       }

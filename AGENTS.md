@@ -98,5 +98,5 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 
 | 测试类 | 覆盖范围 |
 |---|---|
-| `WheelPickerTest` | `unfocusedCount` 防溢出收缩、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与末项残余偏移归零、重组前缩容跳转及恢复原条目数同步、常规 `key` 增删重排同步 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移及 `onPreFling` 挂起期间缩容夹紧与稳定 `key` 保持、重组前缩容或扩容跳转及恢复原条目数不越界、重挂载跳转、条目选中无障碍语义更新、已测量未首次摆放时跳转无死锁 |
+| `WheelPickerTest` | `unfocusedCount` 防溢出收缩、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与末项残余偏移归零、同帧清空/缩容实时公开状态与改表跳转恢复原条目数同步、常规 `key` 增删重排同步 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移及 `onPreFling` 挂起期间缩容夹紧与稳定 `key` 保持、同帧清空/缩容公开状态同步及改表跳转恢复原条目数不越界、重挂载跳转、条目选中无障碍语义更新、已测量未首次摆放时跳转无死锁 |

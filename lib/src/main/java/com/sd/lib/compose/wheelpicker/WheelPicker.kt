@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
@@ -160,7 +161,7 @@ private fun WheelPicker(
     { resolvedCountState.value }
   }
 
-  val owner = remember(state) { Any() }
+  val owner = remember(state) { WheelOwner() }
   val density = LocalDensity.current
   val layoutDirection = LocalLayoutDirection.current
   val itemSizePx = remember(density, itemSize) {
@@ -231,14 +232,13 @@ private fun WheelPicker(
   }
   val lazyListContent: LazyListScope.() -> Unit = remember(
     state,
-    latestCountState,
+    resolvedCountState,
     latestKeyState,
     itemModifier,
     displayHolder,
   ) {
     {
-      val itemCount = latestCountState.value()
-      require(itemCount >= 0) { "require count >= 0, but was $itemCount" }
+      val itemCount = resolvedCountState.value
       if (itemCount > 0) {
         items(
           count = itemCount,
@@ -256,6 +256,21 @@ private fun WheelPicker(
       }
     }
   }
+  val onResolvedUnfocusedCount: (Int) -> Unit = remember(state, owner) {
+    { safeUnfocusedCount ->
+      state.updateViewportUnfocusedCount(
+        owner = owner,
+        unfocusedCount = safeUnfocusedCount,
+      )
+    }
+  }
+  val listModifier = remember(state, owner, flingGuardConnection) {
+    Modifier
+      .nestedScroll(flingGuardConnection)
+      .onGloballyPositioned {
+        state.onPositioned(owner)
+      }
+  }
 
   WheelViewportBox(
     modifier = modifier,
@@ -263,19 +278,10 @@ private fun WheelPicker(
     itemSizePx = itemSizePx,
     unfocusedCount = unfocusedCount,
     viewportState = viewportState,
-    onResolvedUnfocusedCount = { safeUnfocusedCount ->
-      state.updateViewportUnfocusedCount(
-        owner = owner,
-        unfocusedCount = safeUnfocusedCount,
-      )
-    },
+    onResolvedUnfocusedCount = onResolvedUnfocusedCount,
     listContent = {
       WheelLazyList(
-        modifier = Modifier
-          .nestedScroll(flingGuardConnection)
-          .onGloballyPositioned {
-            state.onPositioned(owner)
-          },
+        modifier = listModifier,
         orientation = orientation,
         state = state.lazyListState,
         contentPadding = viewportState.contentPadding,
@@ -331,3 +337,6 @@ private fun WheelLazyList(
     }
   }
 }
+
+@Immutable
+private class WheelOwner

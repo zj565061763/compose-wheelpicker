@@ -25,6 +25,7 @@ internal class WheelPositionStore(
   private var _nextHandoffId = 0
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
+  private var _snappedIndex by mutableIntStateOf(-1)
 
   var lastKnownIndex = initialIndex.coerceAtLeast(0)
 
@@ -44,21 +45,53 @@ internal class WheelPositionStore(
       return awaitingHandoffId != 0
     }
 
-  var snappedIndex by mutableIntStateOf(-1)
-    private set
+  val snappedIndex: Int
+    get() {
+      val raw = _snappedIndex
+      if (raw < 0) {
+        return -1
+      }
+      val count = effectiveCount()
+      return if (count <= 0) -1 else raw.coerceAtMost(count - 1)
+    }
 
   val currentIndex: Int by derivedStateOf {
     val current = attachment
-    if (current == null || current.count <= 0) {
+    val count = effectiveCount(current)
+    if (current == null || count <= 0) {
       -1
     } else {
       calculateSnappedIndex(
         firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
         firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
-        count = current.count,
+        count = count,
         itemSizePx = current.itemSizePx,
       )
     }
+  }
+
+  /** 读取当前挂载的有效条目数，优先采用已缓存的实时提供者返回值 */
+  private fun effectiveCount(current: WheelAttachment? = attachment): Int {
+    if (current == null) {
+      return 0
+    }
+    val provider = _countProvider ?: return current.count
+    val liveCount = provider()
+    require(liveCount >= 0) { "require count >= 0, but was $liveCount" }
+    return liveCount
+  }
+
+  /** 按指定挂载快照[target]与当前滚动位置计算中心条目索引 */
+  private fun calculateAttachedCurrentIndex(target: WheelAttachment?): Int {
+    if (target == null || target.count <= 0) {
+      return -1
+    }
+    return calculateSnappedIndex(
+      firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
+      firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
+      count = target.count,
+      itemSizePx = target.itemSizePx,
+    )
   }
 
   /** 判断底层可见项测量总数是否已与[expectedCount]同步 */
@@ -85,7 +118,7 @@ internal class WheelPositionStore(
   /** 计算[index]相对中心焦点的视觉偏移比例，未挂载或空数据时返回null */
   fun scrollPercentageOf(index: Int): Float? {
     val current = attachment
-    if (current == null || current.count <= 0) {
+    if (current == null || effectiveCount(current) <= 0) {
       return null
     }
     return calculateScrollPercentage(
@@ -204,13 +237,13 @@ internal class WheelPositionStore(
         scrollController.totalItemsCount > 0 &&
         isLayoutSyncedWith(previousAttachment.count)
       ) {
-        val lastIndex = currentIndex
+        val lastIndex = calculateAttachedCurrentIndex(previousAttachment)
         if (lastIndex >= 0) {
           lastKnownIndex = lastIndex
         }
       }
       attachment = WheelAttachment(owner = owner, count = 0, itemSizePx = itemSizePx)
-      snappedIndex = -1
+      _snappedIndex = -1
       return
     }
 
@@ -228,7 +261,7 @@ internal class WheelPositionStore(
         scrollController.totalItemsCount > 0 &&
         isLayoutSyncedWith(previousAttachment.count)
       ) {
-        val liveIndex = currentIndex
+        val liveIndex = calculateAttachedCurrentIndex(previousAttachment)
         if (liveIndex >= 0) {
           lastKnownIndex = liveIndex
         }
@@ -251,14 +284,14 @@ internal class WheelPositionStore(
     attachment = WheelAttachment(owner = owner, count = count, itemSizePx = itemSizePx)
 
     if (restoredTarget != null) {
-      snappedIndex = restoredTarget
+      _snappedIndex = restoredTarget
       return
     }
 
     // 缩容时仅将上一轮越界的吸附索引夹紧至新边界，待新列表完成测量且交接结束后再按实际位置结算
-    if (snappedIndex >= count) {
+    if (_snappedIndex >= count) {
       val clamped = count - 1
-      snappedIndex = clamped
+      _snappedIndex = clamped
       lastKnownIndex = lastKnownIndex.coerceAtMost(clamped)
     }
   }
@@ -309,7 +342,7 @@ internal class WheelPositionStore(
       scrollController.totalItemsCount > 0 &&
       isLayoutSyncedWith(current.count)
     ) {
-      val lastIndex = currentIndex
+      val lastIndex = calculateAttachedCurrentIndex(current)
       if (lastIndex >= 0) {
         lastKnownIndex = lastIndex
       }
@@ -321,16 +354,16 @@ internal class WheelPositionStore(
     awaitingHandoffId = 0
     scrollController.resetPositioned()
     attachment = null
-    snappedIndex = -1
+    _snappedIndex = -1
     return true
   }
 
   fun clearSnappedIndex() {
-    snappedIndex = -1
+    _snappedIndex = -1
   }
 
   fun updateSnappedIndex(index: Int) {
-    snappedIndex = index
+    _snappedIndex = index
   }
 
   /** 布局已同步时将实时中心索引记录为最近已知位置 */
@@ -342,7 +375,7 @@ internal class WheelPositionStore(
       scrollController.totalItemsCount > 0 &&
       isLayoutSyncedWith(current.count)
     ) {
-      val liveIndex = currentIndex
+      val liveIndex = calculateAttachedCurrentIndex(current)
       if (liveIndex >= 0) {
         lastKnownIndex = liveIndex
       }
@@ -379,7 +412,7 @@ internal class WheelPositionStore(
       return
     }
     if (finalAttachment.count <= 0) {
-      snappedIndex = -1
+      _snappedIndex = -1
       return
     }
     if (
@@ -390,8 +423,8 @@ internal class WheelPositionStore(
     ) {
       return
     }
-    val settled = currentIndex
-    snappedIndex = settled
+    val settled = calculateAttachedCurrentIndex(finalAttachment)
+    _snappedIndex = settled
     if (settled >= 0) {
       lastKnownIndex = settled
     }
@@ -405,8 +438,8 @@ internal class WheelPositionStore(
     if (scrollController.hasVisibleItems && scrollController.firstVisibleItemScrollOffset != 0) {
       return
     }
-    val settled = currentIndex
-    snappedIndex = settled
+    val settled = calculateAttachedCurrentIndex(attachment)
+    _snappedIndex = settled
     if (settled >= 0) {
       lastKnownIndex = settled
     }
@@ -425,7 +458,7 @@ internal class WheelPositionStore(
       scrollController.totalItemsCount > 0 &&
       isLayoutSyncedWith(current.count)
     ) {
-      val live = currentIndex
+      val live = calculateAttachedCurrentIndex(current)
       if (live >= 0) {
         return live
       }
