@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -1221,116 +1222,74 @@ class WheelPickerInstrumentedTest {
   }
 
   @Test
-  fun testClearAndShrinkListImmediatelyUpdatesPublicStateInSameCallbackAndComposition() {
-    val stateList = mutableStateListOf<String>().also { list ->
-      repeat(8) { list.add("Item-$it") }
-    }
-    var boxedItems by mutableStateOf((0..7).map { "Boxed-$it" })
+  fun testConditionalUnmountAndEmptySameFrameRefillKeepConsistentPublicState() {
+    var activeList by mutableStateOf<SnapshotStateList<String>?>(
+      mutableStateListOf<String>().also { list ->
+        repeat(8) { list.add("Item-$it") }
+      },
+    )
     val verticalState = WheelPickerState(initialIndex = 3)
-    val horizontalState = WheelPickerState(initialIndex = 3)
+    val observedSnaps = mutableListOf<Int>()
 
     composeRule.setContent {
+      verticalState.SnappedIndex { observedSnaps.add(it) }
+
       Column {
-        // 先于滚轮 SideEffect 在组合阶段按 snappedIndex >= 0 读取列表，清空或缩容重组时不得越界
-        val verticalHeader = if (verticalState.snappedIndex >= 0) {
-          "V:${stateList[verticalState.snappedIndex]}"
-        } else {
-          "V:Empty"
-        }
-        val horizontalHeader = if (horizontalState.snappedIndex >= 0) {
-          "H:${boxedItems[horizontalState.snappedIndex]}"
-        } else {
-          "H:Empty"
-        }
-        BasicText(text = verticalHeader)
-        BasicText(text = horizontalHeader)
-
-        VerticalWheelPicker(
-          count = { stateList.size },
-          state = verticalState,
-          key = { stateList[it] },
-          itemHeight = 48.dp,
-          unfocusedCount = 2,
-        ) { index ->
-          BasicText(text = stateList[index])
-        }
-
-        HorizontalWheelPicker(
-          count = { boxedItems.size },
-          state = horizontalState,
-          itemWidth = 48.dp,
-          unfocusedCount = 2,
-        ) { index ->
-          BasicText(text = boxedItems[index])
+        activeList?.also { items ->
+          VerticalWheelPicker(
+            count = { items.size },
+            state = verticalState,
+            key = { items[it] },
+            itemHeight = 48.dp,
+            unfocusedCount = 2,
+          ) { index ->
+            BasicText(text = items[index])
+          }
         }
       }
     }
 
     composeRule.waitForIdle()
+    assertEquals(3, verticalState.snappedIndex)
+    assertEquals(listOf(3), observedSnaps)
+
+    // 1. 条件渲染卸载滚轮后公开状态归位为 (-1, -1, null)
+    composeRule.runOnUiThread {
+      activeList = null
+    }
+    composeRule.waitForIdle()
+    assertEquals(-1, verticalState.currentIndex)
+    assertEquals(-1, verticalState.snappedIndex)
+    assertNull(verticalState.scrollPercentageOf(3))
+
+    // 2. 重新挂载空列表后同帧回填数据，重组恢复前公开状态保持 (-1, -1, null) 不暴露假索引 0，重组后恢复至 3
+    val backingList = mutableStateListOf<String>()
+    composeRule.runOnUiThread {
+      activeList = backingList
+    }
+    composeRule.waitForIdle()
+    assertEquals(-1, verticalState.currentIndex)
+    assertEquals(-1, verticalState.snappedIndex)
+    assertNull(verticalState.scrollPercentageOf(0))
+
+    var preRecomposeCurrent = 99
+    var preRecomposeSnapped = 99
+    var preRecomposePercentage: Float? = 99f
+    composeRule.runOnUiThread {
+      repeat(8) { backingList.add("Restored-$it") }
+      preRecomposeCurrent = verticalState.currentIndex
+      preRecomposeSnapped = verticalState.snappedIndex
+      preRecomposePercentage = verticalState.scrollPercentageOf(0)
+    }
+    assertEquals(-1, preRecomposeCurrent)
+    assertEquals(-1, preRecomposeSnapped)
+    assertNull(preRecomposePercentage)
+
+    composeRule.waitForIdle()
     assertEquals(3, verticalState.currentIndex)
     assertEquals(3, verticalState.snappedIndex)
     assertEquals(0f, verticalState.scrollPercentageOf(3))
-    composeRule.onNodeWithText("V:Item-3").assertIsDisplayed()
-    composeRule.onNodeWithText("H:Boxed-3").assertIsDisplayed()
-
-    // 1. 同一主线程回调内执行 clear() 并立即读取公开状态，严格返回 (-1, -1, null)
-    var immediateVerticalCurrent = 99
-    var immediateVerticalSnapped = 99
-    var immediateVerticalPercentage: Float? = 99f
-    var immediateHorizontalCurrent = 99
-    var immediateHorizontalSnapped = 99
-    var immediateHorizontalPercentage: Float? = 99f
-
-    composeRule.runOnUiThread {
-      stateList.clear()
-      immediateVerticalCurrent = verticalState.currentIndex
-      immediateVerticalSnapped = verticalState.snappedIndex
-      immediateVerticalPercentage = verticalState.scrollPercentageOf(3)
-
-      boxedItems = emptyList()
-      immediateHorizontalCurrent = horizontalState.currentIndex
-      immediateHorizontalSnapped = horizontalState.snappedIndex
-      immediateHorizontalPercentage = horizontalState.scrollPercentageOf(3)
-    }
-
-    assertEquals(-1, immediateVerticalCurrent)
-    assertEquals(-1, immediateVerticalSnapped)
-    assertNull(immediateVerticalPercentage)
-    assertEquals(-1, immediateHorizontalCurrent)
-    assertEquals(-1, immediateHorizontalSnapped)
-    assertNull(immediateHorizontalPercentage)
-
-    composeRule.waitForIdle()
-    composeRule.onNodeWithText("V:Empty").assertIsDisplayed()
-    composeRule.onNodeWithText("H:Empty").assertIsDisplayed()
-
-    // 2. 重新回填列表后恢复至清空前选中的第 4 项（index = 3），随后缩容至 2 项时同回调与组合期均收敛至 1 不越界
-    composeRule.runOnUiThread {
-      repeat(8) { stateList.add("Restored-$it") }
-      boxedItems = (0..7).map { "BoxedRestored-$it" }
-    }
-    composeRule.waitForIdle()
-    assertEquals(3, verticalState.snappedIndex)
-    assertEquals(3, horizontalState.snappedIndex)
-    composeRule.onNodeWithText("V:Restored-3").assertIsDisplayed()
-    composeRule.onNodeWithText("H:BoxedRestored-3").assertIsDisplayed()
-
-    var shrunkVerticalSnapped = 99
-    var shrunkHorizontalSnapped = 99
-    composeRule.runOnUiThread {
-      stateList.removeRange(2, 8)
-      shrunkVerticalSnapped = verticalState.snappedIndex
-
-      boxedItems = boxedItems.take(2)
-      shrunkHorizontalSnapped = horizontalState.snappedIndex
-    }
-    assertEquals(1, shrunkVerticalSnapped)
-    assertEquals(1, shrunkHorizontalSnapped)
-
-    composeRule.waitForIdle()
-    assertEquals(1, verticalState.snappedIndex)
-    assertEquals(1, horizontalState.snappedIndex)
-    composeRule.onNodeWithText("V:Restored-1").assertIsDisplayed()
-    composeRule.onNodeWithText("H:BoxedRestored-1").assertIsDisplayed()
+    composeRule.onNodeWithText("Restored-3").assertIsDisplayed()
+    composeRule.onNodeWithText("Restored-3").assertIsSelected()
   }
 }

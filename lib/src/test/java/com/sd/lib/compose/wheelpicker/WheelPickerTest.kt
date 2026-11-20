@@ -1554,35 +1554,58 @@ class WheelPickerTest {
         assertEquals(0, countInvocationCount)
         assertEquals(5, state.snappedIndex)
 
-        // 4. 选中第 4 项（index = 3）后，同一回调清空或缩容列表立即读取公开状态即返回空态或夹紧值，回填后恢复至 3
-        state.scrollToIndex(3)
-        assertEquals(3, state.snappedIndex)
-
-        stateList.removeRange(2, 10)
-        assertEquals(1, state.currentIndex)
-        assertEquals(1, state.snappedIndex)
-        assertEquals("Refilled-1", stateList[state.snappedIndex])
-        harness.stepFrame()
-
-        stateList.clear()
-        repeat(10) { stateList.add("Third-$it") }
-        harness.stepFrame()
+        // 4. 空态下同帧新增数据但尚未重组恢复前，公开状态保持 (-1, -1, null) 不暴露假索引 0，重组后恢复至 3
         state.scrollToIndex(3)
         assertEquals(3, state.snappedIndex)
 
         stateList.clear()
+        harness.stepFrame()
         assertEquals(-1, state.currentIndex)
         assertEquals(-1, state.snappedIndex)
-        assertNull(state.scrollPercentageOf(3))
-
-        harness.stepFrame()
-        assertEquals(-1, state.snappedIndex)
+        assertNull(state.scrollPercentageOf(0))
 
         repeat(10) { stateList.add("Restored-$it") }
+        assertEquals(-1, state.currentIndex)
+        assertEquals(-1, state.snappedIndex)
+        assertNull(state.scrollPercentageOf(0))
+
         harness.stepFrame()
         assertEquals(3, state.currentIndex)
         assertEquals(3, state.snappedIndex)
         assertEquals("Restored-3", stateList[state.snappedIndex])
+      } finally {
+        harness.dispose()
+      }
+    }
+
+    // 5. 条件渲染卸载前（data = null 尚未进入下一帧重组），观察流与 SnappedIndex 不会抢先求值 count() 导致 NPE
+    runBlocking {
+      val controller = FakeWheelScrollController(initialIndex = 1)
+      val state = WheelPickerState(initialIndex = 1, scrollController = controller)
+      var nullableData by mutableStateOf<List<String>?>(listOf("A", "B", "C"))
+      val harness = WheelCompositionHarness(
+        parentContext = coroutineContext,
+        controller = controller,
+        state = state,
+      )
+      try {
+        harness.composeToggleableWheel(
+          visibleProvider = { nullableData != null },
+          countProvider = { nullableData!!.size },
+          keyProvider = { null },
+        )
+        harness.stepFrame()
+        assertEquals(1, state.snappedIndex)
+
+        nullableData = null
+        Snapshot.sendApplyNotifications()
+        repeat(4) {
+          yield()
+        }
+        harness.stepFrame()
+        assertEquals(-1, state.currentIndex)
+        assertEquals(-1, state.snappedIndex)
+        assertNull(state.scrollPercentageOf(1))
       } finally {
         harness.dispose()
       }
