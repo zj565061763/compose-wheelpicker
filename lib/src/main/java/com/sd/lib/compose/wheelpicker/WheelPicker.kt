@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
  *
  * 外层按固有尺寸测量宽度时，需通过[modifier]或[focus]指定宽度。
  *
+ * 同帧更新列表并立即跳转时，[count]、[key]与[content]需在各自 lambda 内读取同一列表状态，不要混用实时状态与重组期捕获的列表。
+ *
  * @param modifier 修饰符
  * @param count 条目总数，要求返回值 >= 0；绑定动态列表时建议在 lambda 内直接读取长度
  * @param state 滚轮状态
@@ -79,6 +81,8 @@ fun VerticalWheelPicker(
  * 水平滚轮选择器
  *
  * 外层按固有尺寸测量高度时，需通过[modifier]或[focus]指定高度。
+ *
+ * 同帧更新列表并立即跳转时，[count]、[key]与[content]需在各自 lambda 内读取同一列表状态，不要混用实时状态与重组期捕获的列表。
  *
  * @param modifier 修饰符
  * @param count 条目总数，要求返回值 >= 0；绑定动态列表时建议在 lambda 内直接读取长度

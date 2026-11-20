@@ -980,4 +980,107 @@ class WheelPickerInstrumentedTest {
     composeRule.onNodeWithText("BoxedItem-0").assertIsDisplayed()
     composeRule.onNodeWithText("BoxedItem-0").assertIsSelected()
   }
+
+  @Test
+  fun testExpandAndImmediateScrollToIndexBeforeRecompositionDoesNotCrash() {
+    val stateList = mutableStateListOf("StateItem-0")
+    var boxedItems by mutableStateOf(listOf("BoxedItem-0"))
+    val verticalState = WheelPickerState(initialIndex = 0)
+    val horizontalState = WheelPickerState(initialIndex = 0)
+    lateinit var composeScope: CoroutineScope
+    var snappedRightAfterVerticalJump = -1
+    var snappedRightAfterHorizontalJump = -1
+
+    composeRule.setContent {
+      composeScope = rememberCoroutineScope()
+
+      VerticalWheelPicker(
+        count = { stateList.size },
+        state = verticalState,
+        key = { stateList[it] },
+        itemHeight = 48.dp,
+        unfocusedCount = 2,
+      ) { index ->
+        BasicText(text = stateList[index])
+      }
+
+      HorizontalWheelPicker(
+        count = { boxedItems.size },
+        state = horizontalState,
+        key = { boxedItems[it] },
+        itemWidth = 48.dp,
+        unfocusedCount = 2,
+      ) { index ->
+        BasicText(text = boxedItems[index])
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(0, verticalState.snappedIndex)
+    assertEquals(0, horizontalState.snappedIndex)
+
+    // 同一次主线程回调中将 1 项扩容至 6 项并立即在重组前调用 scrollToIndex(5)，key 与 content 读取同一状态不越界
+    composeRule.runOnUiThread {
+      for (index in 1..5) {
+        stateList.add("StateItem-$index")
+      }
+      composeScope.launch {
+        verticalState.scrollToIndex(5)
+        snappedRightAfterVerticalJump = verticalState.snappedIndex
+      }
+
+      boxedItems = (0..5).map { "BoxedItem-$it" }
+      composeScope.launch {
+        horizontalState.scrollToIndex(5)
+        snappedRightAfterHorizontalJump = horizontalState.snappedIndex
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(5, snappedRightAfterVerticalJump)
+    assertEquals(5, verticalState.snappedIndex)
+    assertEquals(5, verticalState.currentIndex)
+    assertEquals(0f, verticalState.scrollPercentageOf(5))
+    assertEquals("StateItem-5", stateList[verticalState.snappedIndex])
+    composeRule.onNodeWithText("StateItem-5").assertIsDisplayed()
+    composeRule.onNodeWithText("StateItem-5").assertIsSelected()
+
+    assertEquals(5, snappedRightAfterHorizontalJump)
+    assertEquals(5, horizontalState.snappedIndex)
+    assertEquals(5, horizontalState.currentIndex)
+    assertEquals(0f, horizontalState.scrollPercentageOf(5))
+    assertEquals("BoxedItem-5", boxedItems[horizontalState.snappedIndex])
+    composeRule.onNodeWithText("BoxedItem-5").assertIsDisplayed()
+    composeRule.onNodeWithText("BoxedItem-5").assertIsSelected()
+
+    // 再次在重组前从 6 项扩容至 12 项并立即调用 animateScrollToIndex(11)，动画正常落地至新末项
+    composeRule.runOnUiThread {
+      for (index in 6..11) {
+        stateList.add("StateItem-$index")
+      }
+      composeScope.launch {
+        verticalState.animateScrollToIndex(11)
+      }
+
+      boxedItems = (0..11).map { "BoxedItem-$it" }
+      composeScope.launch {
+        horizontalState.animateScrollToIndex(11)
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(11, verticalState.snappedIndex)
+    assertEquals(11, verticalState.currentIndex)
+    assertEquals(0f, verticalState.scrollPercentageOf(11))
+    assertEquals("StateItem-11", stateList[verticalState.snappedIndex])
+    composeRule.onNodeWithText("StateItem-11").assertIsDisplayed()
+    composeRule.onNodeWithText("StateItem-11").assertIsSelected()
+
+    assertEquals(11, horizontalState.snappedIndex)
+    assertEquals(11, horizontalState.currentIndex)
+    assertEquals(0f, horizontalState.scrollPercentageOf(11))
+    assertEquals("BoxedItem-11", boxedItems[horizontalState.snappedIndex])
+    composeRule.onNodeWithText("BoxedItem-11").assertIsDisplayed()
+    composeRule.onNodeWithText("BoxedItem-11").assertIsSelected()
+  }
 }
