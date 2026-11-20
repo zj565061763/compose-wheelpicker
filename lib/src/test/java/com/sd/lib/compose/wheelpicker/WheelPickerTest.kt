@@ -1491,6 +1491,7 @@ class WheelPickerTest {
       val stateList = mutableStateListOf<String>().also { list ->
         repeat(10) { list.add("Init-$it") }
       }
+      var countInvocationCount = 0
 
       val harness = WheelCompositionHarness(
         parentContext = coroutineContext,
@@ -1499,7 +1500,10 @@ class WheelPickerTest {
       )
       try {
         harness.composeLiveListWheel(
-          count = { stateList.size },
+          count = {
+            countInvocationCount++
+            stateList.size
+          },
           key = { stateList[it] },
           onRenderItem = { index -> stateList[index] },
         )
@@ -1530,6 +1534,25 @@ class WheelPickerTest {
         assertEquals(9, state.snappedIndex)
         assertEquals(0f, state.scrollPercentageOf(9))
         assertEquals("Refilled-9", stateList[state.snappedIndex])
+
+        // 3. 条目数不变时连续更新滚动偏移（含滚动中与逐次静止快照发射），调用方的 count() 均不重复执行
+        countInvocationCount = 0
+        for (step in 0..9) {
+          controller.setPositionInScroll(index = step, offset = 0)
+          Snapshot.sendApplyNotifications()
+          yield()
+        }
+        controller.beginGestureScroll(index = 8, offset = 4)
+        for (step in 1..10) {
+          controller.setPositionInScroll(index = 8 - step / 4, offset = (step * 4) % 48)
+          Snapshot.sendApplyNotifications()
+          yield()
+        }
+        controller.setPositionInScroll(index = 5, offset = 0)
+        controller.endGestureScroll()
+        harness.stepFrame()
+        assertEquals(0, countInvocationCount)
+        assertEquals(5, state.snappedIndex)
       } finally {
         harness.dispose()
       }
@@ -1671,16 +1694,17 @@ private class WheelCompositionHarness(
     val latestCountState = rememberUpdatedState(count)
     val latestKeyState = rememberUpdatedState(key)
     val latestRenderState = rememberUpdatedState(onRenderItem)
-    val resolvedCount = remember {
+    val resolvedCountState = remember {
       derivedStateOf {
         val value = latestCountState.value()
         require(value >= 0) { "require count >= 0, but was $value" }
         value
       }
-    }.value
+    }
+    val resolvedCount = resolvedCountState.value
     state.attachLiveCountSync()
-    val countProvider: () -> Int = remember(latestCountState) {
-      { latestCountState.value() }
+    val countProvider: () -> Int = remember(resolvedCountState) {
+      { resolvedCountState.value }
     }
     rememberWheelPickerDisplayHolder(
       state = state,
@@ -1692,7 +1716,7 @@ private class WheelCompositionHarness(
       _latestCount = resolvedCount
       _latestKey = latestKeyState.value
       controller.liveMeasureSpec = {
-        Triple(latestCountState.value(), latestKeyState.value, latestRenderState.value)
+        Triple(resolvedCountState.value, latestKeyState.value, latestRenderState.value)
       }
       state.updateAttachment(
         owner = owner,

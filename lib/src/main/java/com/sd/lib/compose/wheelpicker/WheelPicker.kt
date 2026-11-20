@@ -156,8 +156,8 @@ private fun WheelPicker(
   }
   val resolvedCount = resolvedCountState.value
   state.attachLiveCountSync()
-  val countProvider: () -> Int = remember(latestCountState) {
-    { latestCountState.value() }
+  val countProvider: () -> Int = remember(resolvedCountState) {
+    { resolvedCountState.value }
   }
 
   val owner = remember(state) { Any() }

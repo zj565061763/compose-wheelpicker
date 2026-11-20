@@ -104,8 +104,12 @@ internal class WheelSnapObserver(
         isPositioned = scrollController.isPositioned,
         totalItemsCount = scrollController.totalItemsCount,
       )
-    }.collect { _ ->
-      if (store.attachment?.owner === owner) {
+    }.collect { snapshot ->
+      if (
+        store.attachment?.owner === owner &&
+        snapshot.liveCount != null &&
+        snapshot.liveCount != store.attachment?.count
+      ) {
         val syncedCount = store.syncLiveCount()
         if (syncedCount != null && syncedCount <= 0) {
           scrollExecutor.cancelActiveScroll()
