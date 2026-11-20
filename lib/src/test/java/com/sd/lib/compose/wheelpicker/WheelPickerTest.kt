@@ -1340,6 +1340,75 @@ class WheelPickerTest {
       }
     }
   }
+
+  @Test
+  fun testAwaitIdleDoesNotReevaluatePerScrollOffsetChange() {
+    runBlocking {
+      val controller = FakeWheelScrollController(initialIndex = 0)
+      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
+      val owner = Any()
+      val frameClock = BroadcastFrameClock()
+
+      state.updateAttachment(
+        owner = owner,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+      )
+      controller.applyMeasure(count = 10)
+
+      val observerJob = launch(frameClock, start = CoroutineStart.UNDISPATCHED) {
+        state.observeSnappedIndex(owner)
+      }
+      try {
+        Snapshot.sendApplyNotifications()
+        yield()
+        assertEquals(0, state.snappedIndex)
+
+        // 先进入拖拽滚动并松手，让观察协程在帧边界等待窗口后因新滚动启动进入 awaitIdle
+        controller.beginGestureScroll(index = 1, offset = 12)
+        Snapshot.sendApplyNotifications()
+        yield()
+
+        controller.endGestureScroll()
+        Snapshot.sendApplyNotifications()
+        yield()
+
+        // 帧边界到达前启动惯性滑动，随后推进一帧使观察协程挂起在 awaitIdle 内
+        controller.beginGestureScroll(index = 2, offset = 16)
+        frameClock.sendFrame(16_000_000L)
+        Snapshot.sendApplyNotifications()
+        yield()
+        // 消费外层流挂起前的首次快照通知后重置计数
+        controller.setPositionInScroll(index = 2, offset = 20)
+        Snapshot.sendApplyNotifications()
+        yield()
+
+        controller.totalItemsCountReadCount = 0
+        for (step in 1..10) {
+          controller.setPositionInScroll(index = 2 + step / 3, offset = (step * 7) % 48)
+          Snapshot.sendApplyNotifications()
+          yield()
+        }
+        assertEquals(0, controller.totalItemsCountReadCount)
+
+        // 惯性滑动停止后正常恢复自动吸附并结算 snappedIndex
+        controller.setPositionInScroll(index = 5, offset = 30)
+        controller.endGestureScroll()
+        Snapshot.sendApplyNotifications()
+        yield()
+        frameClock.sendFrame(32_000_000L)
+        repeat(4) {
+          Snapshot.sendApplyNotifications()
+          yield()
+        }
+        assertEquals(6, state.snappedIndex)
+      } finally {
+        observerJob.cancel()
+        observerJob.join()
+      }
+    }
+  }
 }
 
 private class EmptyApplier : AbstractApplier<Unit>(Unit) {
@@ -1569,6 +1638,7 @@ private class FakeWheelScrollController(
   private val _measurementScopeInvalidator = mutableStateOf(Unit, neverEqualPolicy())
   private val _placementScopeInvalidator = mutableStateOf(Unit, neverEqualPolicy())
   private var _animationFrameTick by mutableLongStateOf(0L)
+  private var _totalItemsCount by mutableIntStateOf(0)
 
   val animateTargetsRequested = mutableListOf<Int>()
   val completedAnimateTargets = mutableListOf<Int>()
@@ -1591,6 +1661,7 @@ private class FakeWheelScrollController(
     private set
 
   var isPositionedReadCount = 0
+  var totalItemsCountReadCount = 0
 
   override val isPositioned: Boolean
     get() {
@@ -1598,8 +1669,11 @@ private class FakeWheelScrollController(
       return isPlaced && _hasCurrentMountLayout
     }
 
-  override var totalItemsCount by mutableIntStateOf(0)
-    private set
+  override val totalItemsCount: Int
+    get() {
+      totalItemsCountReadCount++
+      return _totalItemsCount
+    }
 
   override val interactionSource: InteractionSource
     get() {
@@ -1623,7 +1697,7 @@ private class FakeWheelScrollController(
     _hasCurrentMountLayout = true
     val previousFirstIndex = firstVisibleItemIndex
     val previousFirstKey = _lastKnownFirstItemKey
-    totalItemsCount = count
+    _totalItemsCount = count
     hasVisibleItems = count > 0
     _measuredKeys = if (count > 0 && key != null) {
       List(count) { index -> key(index) }

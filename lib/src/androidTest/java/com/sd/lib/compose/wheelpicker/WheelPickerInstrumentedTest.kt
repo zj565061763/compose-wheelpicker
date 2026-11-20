@@ -39,6 +39,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
@@ -357,8 +358,8 @@ class WheelPickerInstrumentedTest {
           unfocusedCount = 2,
           focus = {
             WheelPickerFocusHorizontal(
-              modifier = Modifier.testTag("focusHorizontalZero"),
-              thickness = 0.dp,
+              modifier = Modifier.testTag("focusHorizontalHairline"),
+              thickness = Dp.Hairline,
             )
           },
           display = { index ->
@@ -378,11 +379,19 @@ class WheelPickerInstrumentedTest {
           .testTag("focusVerticalTransparent"),
         color = Color.Transparent,
       )
+
+      WheelPickerFocusVertical(
+        modifier = Modifier
+          .size(80.dp, 40.dp)
+          .testTag("focusVerticalNegativeThickness"),
+        thickness = (-1).dp,
+      )
     }
 
     composeRule.waitForIdle()
-    composeRule.onNodeWithTag("focusHorizontalZero").assertIsDisplayed()
+    composeRule.onNodeWithTag("focusHorizontalHairline").assertIsDisplayed()
     composeRule.onNodeWithTag("focusVerticalTransparent").assertIsDisplayed()
+    composeRule.onNodeWithTag("focusVerticalNegativeThickness").assertIsDisplayed()
     composeRule.onNodeWithTag("rtlDisplay-2", useUnmergedTree = true).assertIsDisplayed()
 
     val centerPct = rtlState.scrollPercentageOf(2)!!

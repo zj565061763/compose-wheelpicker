@@ -225,14 +225,7 @@ internal class WheelSnapObserver(
   private suspend fun awaitIdle(owner: Any): Boolean {
     snapshotFlow {
       val currentAttachment = store.attachment
-      when {
-        currentAttachment?.owner !== owner || currentAttachment.count <= 0 -> true
-        isBusy() -> {
-          store.updateLastKnownIndexFromLive()
-          false
-        }
-        else -> true
-      }
+      currentAttachment?.owner !== owner || currentAttachment.count <= 0 || !isBusy()
     }.first { it }
     val afterAttachment = store.attachment
     return afterAttachment?.owner === owner && afterAttachment.count > 0
