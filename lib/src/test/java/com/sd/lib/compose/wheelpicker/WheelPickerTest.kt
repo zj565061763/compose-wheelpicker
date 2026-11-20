@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -52,6 +53,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -242,90 +244,92 @@ class WheelPickerTest {
   @Test
   fun testScrollBeforeAttachAndBeforeFirstLayoutDoesNotSuspend() {
     runBlocking {
-      val state = WheelPickerState(initialIndex = 0)
-      state.scrollToIndex(6)
-      assertEquals(-1, state.snappedIndex)
+      withTimeout(5.seconds) {
+        val state = WheelPickerState(initialIndex = 0)
+        state.scrollToIndex(6)
+        assertEquals(-1, state.snappedIndex)
 
-      val owner = Any()
-      state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      assertEquals(6, state.currentIndex)
-      assertEquals(6, state.snappedIndex)
+        val owner = Any()
+        state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        assertEquals(6, state.currentIndex)
+        assertEquals(6, state.snappedIndex)
 
-      // 已挂载但尚未完成首次测量（totalItemsCount == 0）时，连续调用 scrollToIndex / animateScrollToIndex 均不挂起
-      state.scrollToIndex(3)
-      assertEquals(3, state.currentIndex)
-      assertEquals(3, state.snappedIndex)
+        // 已挂载但尚未完成首次测量（totalItemsCount == 0）时，连续调用 scrollToIndex / animateScrollToIndex 均不挂起
+        state.scrollToIndex(3)
+        assertEquals(3, state.currentIndex)
+        assertEquals(3, state.snappedIndex)
 
-      state.animateScrollToIndex(99)
-      assertEquals(9, state.currentIndex)
-      assertEquals(9, state.snappedIndex)
+        state.animateScrollToIndex(99)
+        assertEquals(9, state.currentIndex)
+        assertEquals(9, state.snappedIndex)
 
-      // count == 0 时调用 animateScrollToIndex 同样不阻塞且覆盖待恢复位置
-      state.updateAttachment(owner = owner, count = 0, unfocusedCount = 2, itemSizePx = 48)
-      state.lazyListState.requestScrollToItem(0)
-      state.animateScrollToIndex(8)
-      assertEquals(-1, state.snappedIndex)
+        // count == 0 时调用 animateScrollToIndex 同样不阻塞且覆盖待恢复位置
+        state.updateAttachment(owner = owner, count = 0, unfocusedCount = 2, itemSizePx = 48)
+        state.lazyListState.requestScrollToItem(0)
+        state.animateScrollToIndex(8)
+        assertEquals(-1, state.snappedIndex)
 
-      state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      assertEquals(8, state.currentIndex)
-      assertEquals(8, state.snappedIndex)
+        state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        assertEquals(8, state.currentIndex)
+        assertEquals(8, state.snappedIndex)
 
-      // 已完成测量（totalItemsCount > 0）但尚未完成首次摆放（isPositioned == false）时，两个跳转 API 均不挂起
-      val measuredUnplacedController = FakeWheelScrollController(initialIndex = 0).apply {
-        isPlaced = false
-        pauseAnimations = true
+        // 已完成测量（totalItemsCount > 0）但尚未完成首次摆放（isPositioned == false）时，两个跳转 API 均不挂起
+        val measuredUnplacedController = FakeWheelScrollController(initialIndex = 0).apply {
+          isPlaced = false
+          pauseAnimations = true
+        }
+        val measuredUnplacedState = WheelPickerState(
+          initialIndex = 0,
+          scrollController = measuredUnplacedController,
+        )
+        val unplacedOwner = Any()
+        measuredUnplacedState.updateAttachment(
+          owner = unplacedOwner,
+          count = 12,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+        )
+        measuredUnplacedController.applyMeasure(count = 12)
+        assertEquals(12, measuredUnplacedController.totalItemsCount)
+        assertFalse(measuredUnplacedController.isPositioned)
+
+        measuredUnplacedState.scrollToIndex(8)
+        assertEquals(8, measuredUnplacedState.currentIndex)
+        assertEquals(8, measuredUnplacedState.snappedIndex)
+
+        measuredUnplacedState.animateScrollToIndex(5)
+        assertEquals(5, measuredUnplacedState.currentIndex)
+        assertEquals(5, measuredUnplacedState.snappedIndex)
+        assertTrue(measuredUnplacedController.animateTargetsRequested.isEmpty())
+
+        // 旧 1 项滚轮卸载后复用同一状态挂载 20 项新滚轮，首次测量前调用 animateScrollToIndex(8) 不丢失目标
+        val remountController = FakeWheelScrollController(initialIndex = 0)
+        val remountState = WheelPickerState(
+          initialIndex = 0,
+          scrollController = remountController,
+        )
+        val firstOwner = Any()
+        val secondOwner = Any()
+        remountState.updateAttachment(owner = firstOwner, count = 1, unfocusedCount = 2, itemSizePx = 48)
+        remountController.applyMeasure(count = 1)
+        assertTrue(remountController.isPositioned)
+        assertEquals(0, remountState.snappedIndex)
+
+        remountState.detach(firstOwner)
+        assertFalse(remountController.isPositioned)
+        assertEquals(1, remountController.totalItemsCount)
+
+        remountState.updateAttachment(owner = secondOwner, count = 20, unfocusedCount = 2, itemSizePx = 48)
+        assertFalse(remountController.isPositioned)
+        remountState.animateScrollToIndex(8)
+        assertTrue(remountController.animateTargetsRequested.isEmpty())
+        assertEquals(8, remountState.snappedIndex)
+
+        remountController.applyMeasure(count = 20)
+        assertTrue(remountController.isPositioned)
+        assertEquals(8, remountState.currentIndex)
+        assertEquals(8, remountState.snappedIndex)
       }
-      val measuredUnplacedState = WheelPickerState(
-        initialIndex = 0,
-        scrollController = measuredUnplacedController,
-      )
-      val unplacedOwner = Any()
-      measuredUnplacedState.updateAttachment(
-        owner = unplacedOwner,
-        count = 12,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-      )
-      measuredUnplacedController.applyMeasure(count = 12)
-      assertEquals(12, measuredUnplacedController.totalItemsCount)
-      assertFalse(measuredUnplacedController.isPositioned)
-
-      measuredUnplacedState.scrollToIndex(8)
-      assertEquals(8, measuredUnplacedState.currentIndex)
-      assertEquals(8, measuredUnplacedState.snappedIndex)
-
-      measuredUnplacedState.animateScrollToIndex(5)
-      assertEquals(5, measuredUnplacedState.currentIndex)
-      assertEquals(5, measuredUnplacedState.snappedIndex)
-      assertTrue(measuredUnplacedController.animateTargetsRequested.isEmpty())
-
-      // 旧 1 项滚轮卸载后复用同一状态挂载 20 项新滚轮，首次测量前调用 animateScrollToIndex(8) 不丢失目标
-      val remountController = FakeWheelScrollController(initialIndex = 0)
-      val remountState = WheelPickerState(
-        initialIndex = 0,
-        scrollController = remountController,
-      )
-      val firstOwner = Any()
-      val secondOwner = Any()
-      remountState.updateAttachment(owner = firstOwner, count = 1, unfocusedCount = 2, itemSizePx = 48)
-      remountController.applyMeasure(count = 1)
-      assertTrue(remountController.isPositioned)
-      assertEquals(0, remountState.snappedIndex)
-
-      remountState.detach(firstOwner)
-      assertFalse(remountController.isPositioned)
-      assertEquals(1, remountController.totalItemsCount)
-
-      remountState.updateAttachment(owner = secondOwner, count = 20, unfocusedCount = 2, itemSizePx = 48)
-      assertFalse(remountController.isPositioned)
-      remountState.animateScrollToIndex(8)
-      assertTrue(remountController.animateTargetsRequested.isEmpty())
-      assertEquals(8, remountState.snappedIndex)
-
-      remountController.applyMeasure(count = 20)
-      assertTrue(remountController.isPositioned)
-      assertEquals(8, remountState.currentIndex)
-      assertEquals(8, remountState.snappedIndex)
     }
   }
 

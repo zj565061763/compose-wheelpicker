@@ -70,19 +70,20 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 
 - 以官方组件为标准：状态管理、滚动、嵌套滚动与无障碍语义统一对齐官方 `LazyColumn`、`LazyListState` 与 `Pager` 的常规边界。
 - 不为极端情况复杂化架构：实现与修复时保持整体设计简洁，不要为了处理极端或人工构造的边界情况改变整体设计、引入复杂机制。
-- 代码审查对齐官方边界：审查以官方组件的行为边界为准，不要求为官方组件同样未处理的极端场景增加兜底。
+- 代码审查与问题核查对齐官方边界：自主审查或核查审查意见时，必须按“以官方组件为标准、对齐官方边界、有意设计不得作为缺陷或功能缺失报告”的约束过滤，官方组件同样未兜底或未在 KDoc 说明的场景不认定为问题。
 
 以下具体取舍均属有意设计，代码审查不得作为缺陷或功能缺失报告：
 
 - `count` 惰性求值与 `key` 底层透传：`VerticalWheelPicker` 与 `HorizontalWheelPicker` 接收 `count: () -> Int` 在 `LazyListScope` 与编程式滚动执行前惰性读取最新条目数，`key` 参数直接透传给底层 `LazyList`，由 `LazyListState` 原生最近邻窗口（约 ±100 项）保持可见锚点，再由 `WheelSnapObserver` 在静止时同步 `snappedIndex`。
 - 不在公开状态读取与内部观察流中主动求值 `count()`：与官方 `PagerState` 一致，`currentIndex`、`snappedIndex`、`scrollPercentageOf` 及 `WheelSnapObserver` 仅基于已同步的挂载计数计算，仅在组合期、测量期与显式调用 `scrollToIndex` / `animateScrollToIndex` 时求值 `count()`，修改列表后未完成重组或跳转前读取公开状态仍为上一轮已同步值，避免 `snapshotFlow` 在条件卸载前抢先求值 `count()`、无关条目语义与图层随增删失效以及空态同帧回填在重组前短暂暴露假索引 `0`。
 - 不兜底混用实时 `count` 与旧列表快照的越界：与官方 `Pager` 一致，同帧更新数据并在重组前立即跳转时，调用方需在 `count`、`key` 与 `content` 的 lambda 内读取同一列表状态，库层不为混用实时条目数与重组期捕获的不可变列表导致的越界提供兜底。
+- 不兜底或额外说明非可观察的 `count` 数据源：与官方 `LazyColumn` 及 `rememberPagerState` 一致，动态数据使用 Compose 可观察状态属通用前提，既不为直接裸读 `StateFlow.value` 或普通可变集合等非可观察数据源增加兜底，也不在 `count` 的公开 KDoc 中额外说明该前提。
 - 不提供按 `key` 跳转 API：不提供 `scrollToKey` / `animateScrollToKey`，调用方需自行在数据源查找索引后调用 `scrollToIndex` / `animateScrollToIndex`。
 - 不做跨窗口重排追踪：不在状态层维护独立 `key` 缓存、全表扫描或快照探测（如 `keyProbeIndex`），单次重排跨度超出 `LazyList` 原生最近邻窗口（约 ±100 项）时按原索引位置回退。
 - 不支持逐项独立 `MutableState` 暗中突变：不支持在稳定 `key` 闭包内用每个条目独立的 `MutableState` 原地改值却不触发列表重组，数据变更需通过不可变列表重组或 `SnapshotStateList` 结构修改驱动。
 - 不跨空列表或重挂载记忆旧 `key`：列表变空（`count() == 0`）或组件卸载重挂载后统一按最近已知索引恢复并限制在新 `0..<count` 范围内，重新挂载时重置底层残留锚点。
 - 不在动画飞行途中按 `key` 改道：`animateScrollToIndex` 执行期间若发生数据增删重排，不中途取消并追踪旧 `key`，始终滚向调用时锁定的目标索引。
-- 不替外部无帧时钟协程代借帧时钟：`animateScrollToIndex` 与官方 `LazyListState.animateScrollToItem` 一致，需在含 `MonotonicFrameClock` 的 Compose 协程作用域（如 `LaunchedEffect`、`rememberCoroutineScope`）中调用，不为缺少帧时钟的外部协程跨协程借用或等待帧时钟。
+- 不替外部无帧时钟协程代借帧时钟或额外补充帧时钟文档：`animateScrollToIndex` 的行为与 KDoc 均与官方 `LazyListState.animateScrollToItem`、`PagerState.animateScrollToPage` 一致，需在含 `MonotonicFrameClock` 的 Compose 协程作用域（如 `LaunchedEffect`、`rememberCoroutineScope`）中调用，不为缺少帧时钟的外部协程跨协程借用或等待帧时钟，也不在公开 KDoc 中额外说明该通用要求。
 - 不做同帧抢跑越界等待：修改数据状态后未等重组就在同一帧调用越界 `scrollToIndex` 时，按调用当下 `count()` 返回值直接限制边界，不做跨帧挂起等待。
 - 不做半格偏移删首项补偿：手势停留在非零像素偏移期间并发删除当前首项时，交由 `LazyList` 原生布局与松手后的自动吸附处理。
 - 不对超大条目跨项动画做像素瞬移裁剪：`animateScrollToIndex` 直接复用官方 `LazyListState.animateScrollToItem`（仅在跨度超过 100 项时瞬移），极端超大 `itemSize` 下跨项像素距离过大导致的动画耗时增长属上游原生行为，不拆分为预跳转加短动画。
