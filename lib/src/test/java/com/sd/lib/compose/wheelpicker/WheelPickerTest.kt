@@ -1,5 +1,6 @@
 package com.sd.lib.compose.wheelpicker
 
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.MutatorMutex
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.InteractionSource
@@ -44,7 +45,9 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -516,6 +519,49 @@ class WheelPickerTest {
       assertEquals(9, controller.firstVisibleItemIndex)
       assertEquals(9, state.currentIndex)
       assertEquals(9, state.snappedIndex)
+
+      // 场景 D：立即派发调度器下动画期间 count -> 0 时静默结束不误抛取消异常，并保留待跳转目标
+      val unconfinedEmptyJob = launch(Dispatchers.Unconfined) {
+        state.animateScrollToIndex(5)
+      }
+      state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
+      assertTrue(unconfinedEmptyJob.isCompleted)
+      assertFalse(unconfinedEmptyJob.isCancelled)
+      controller.applyMeasure(count = 0)
+
+      state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
+      controller.applyMeasure(count = 10)
+      assertEquals(5, controller.firstVisibleItemIndex)
+      assertEquals(5, state.currentIndex)
+      assertEquals(5, state.snappedIndex)
+
+      // 场景 E：立即派发调度器下动画期间切换非空 owner 时先取消旧滚动且不以旧 owner 重入覆盖新挂载状态
+      val ownerC = Any()
+      var liveCount = 10
+      state.updateAttachment(
+        owner = ownerB,
+        count = 10,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+        countProvider = { liveCount },
+      )
+      val unconfinedSwitchJob = launch(Dispatchers.Unconfined) {
+        state.animateScrollToIndex(3)
+      }
+      liveCount = 4
+      state.updateAttachment(
+        owner = ownerC,
+        count = 4,
+        unfocusedCount = 2,
+        itemSizePx = 48,
+        countProvider = { liveCount },
+      )
+      assertTrue(unconfinedSwitchJob.isCancelled)
+      state.detach(ownerB)
+      controller.applyMeasure(count = 4)
+      assertEquals(3, controller.firstVisibleItemIndex)
+      assertEquals(3, state.currentIndex)
+      assertEquals(3, state.snappedIndex)
     }
   }
 
@@ -1606,6 +1652,52 @@ class WheelPickerTest {
         assertEquals(-1, state.currentIndex)
         assertEquals(-1, state.snappedIndex)
         assertNull(state.scrollPercentageOf(1))
+
+        // 非零偏移进入自动吸附及自动吸附被手势抢占中断期间，data = null 尚未重组卸载前均不抢先求值 count()
+        nullableData = listOf("A", "B", "C")
+        harness.stepFrame()
+        assertEquals(1, state.snappedIndex)
+
+        controller.pauseAnimations = true
+        nullableData = null
+        controller.setPositionInScroll(index = 1, offset = 20)
+        Snapshot.sendApplyNotifications()
+        repeat(4) {
+          yield()
+        }
+        assertEquals(listOf(1), controller.animateTargetsRequested)
+        controller.interruptWithUserInput()
+        repeat(4) {
+          yield()
+        }
+        harness.stepFrame()
+        assertEquals(-1, state.snappedIndex)
+
+        // animateScrollToIndex 在卸载前正常结束或被外部取消进入 finally 时，均不抢先求值 count()
+        nullableData = listOf("A", "B", "C")
+        harness.stepFrame()
+        assertEquals(1, state.snappedIndex)
+
+        val finishBeforeDetachJob = launch(start = CoroutineStart.UNDISPATCHED) {
+          state.animateScrollToIndex(2)
+        }
+        nullableData = null
+        controller.resumeActiveAnimation()
+        finishBeforeDetachJob.join()
+        harness.stepFrame()
+        assertEquals(-1, state.snappedIndex)
+
+        nullableData = listOf("A", "B", "C")
+        harness.stepFrame()
+        assertEquals(2, state.snappedIndex)
+
+        val cancelBeforeDetachJob = launch(start = CoroutineStart.UNDISPATCHED) {
+          state.animateScrollToIndex(0)
+        }
+        nullableData = null
+        cancelBeforeDetachJob.cancelAndJoin()
+        harness.stepFrame()
+        assertEquals(-1, state.snappedIndex)
       } finally {
         harness.dispose()
       }
@@ -2022,6 +2114,11 @@ private class FakeWheelScrollController(
 
   fun resumeActiveAnimation() {
     _activeGate?.complete(Unit)
+  }
+
+  suspend fun interruptWithUserInput() {
+    _mutatorMutex.mutate(MutatePriority.UserInput) {
+    }
   }
 
   override fun requestScrollToItem(index: Int, scrollOffset: Int) {

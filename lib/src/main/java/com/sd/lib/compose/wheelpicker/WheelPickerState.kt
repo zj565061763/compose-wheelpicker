@@ -136,7 +136,7 @@ class WheelPickerState internal constructor(
     countProvider: (() -> Int)? = null,
   ) {
     val previousOwner = _store.attachment?.owner
-    if (count <= 0 || (previousOwner != null && previousOwner !== owner)) {
+    if (count > 0 && previousOwner != null && previousOwner !== owner) {
       _scrollExecutor.cancelActiveScroll()
     }
     _store.updateAttachment(
@@ -148,6 +148,9 @@ class WheelPickerState internal constructor(
       flingGuardEnabled = flingGuardEnabled,
       countProvider = countProvider,
     )
+    if (count <= 0) {
+      _scrollExecutor.cancelActiveScroll()
+    }
   }
 
   /** 解绑[owner]并在成功卸载时取消活跃滚动 */

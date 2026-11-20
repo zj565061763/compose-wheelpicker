@@ -268,10 +268,10 @@ internal class WheelPositionStore(
     return _liveCountSyncInvalidator.value
   }
 
-  /** 从挂载的条目数提供者同步最新条目总数，返回同步后的有效条目数，未挂载时返回null */
-  fun syncLiveCount(): Int? {
-    val current = attachment ?: return null
-    val provider = _countProvider ?: return current.count
+  /** 从挂载的条目数提供者同步最新条目总数 */
+  fun syncLiveCount() {
+    val current = attachment ?: return
+    val provider = _countProvider ?: return
     val liveCount = provider()
     require(liveCount >= 0) { "require count >= 0, but was $liveCount" }
     if (liveCount != current.count) {
@@ -286,7 +286,6 @@ internal class WheelPositionStore(
         countProvider = provider,
       )
     }
-    return liveCount
   }
 
   /** 卸载[owner]绑定的滚轮，保存最近有效索引并重置挂载与吸附状态 */
