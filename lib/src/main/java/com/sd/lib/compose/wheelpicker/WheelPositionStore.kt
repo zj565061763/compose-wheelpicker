@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 
 internal data class WheelAttachment(
   val owner: Any,
@@ -103,8 +104,10 @@ internal class WheelPositionStore(
     owner: Any,
     unfocusedCount: Int,
   ) {
-    if (attachment?.owner === owner && _unfocusedCount != unfocusedCount) {
-      _unfocusedCount = unfocusedCount
+    Snapshot.withoutReadObservation {
+      if (attachment?.owner === owner && _unfocusedCount != unfocusedCount) {
+        _unfocusedCount = unfocusedCount
+      }
     }
   }
 

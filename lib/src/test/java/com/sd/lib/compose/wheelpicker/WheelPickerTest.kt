@@ -943,6 +943,49 @@ class WheelPickerTest {
       }
     }
 
+    // 验证视口测量阶段更新内边距、裁剪与单侧未选中条目数时不触发快照读观测（不订阅 attachment 或自失效）
+    val observeController = FakeWheelScrollController(initialIndex = 2)
+    val observeState = WheelPickerState(initialIndex = 2, scrollController = observeController)
+    val observeOwner = Any()
+    observeState.updateAttachment(
+      owner = observeOwner,
+      count = 10,
+      unfocusedCount = 2,
+      itemSizePx = 48,
+    )
+    observeController.applyMeasure(count = 10, unfocusedCount = 2, itemSizePx = 48)
+    val observeViewportState = WheelViewportState(
+      orientation = WheelOrientation.Vertical,
+      density = density,
+      itemSizePx = 48,
+      initialUnfocusedCount = 2,
+    )
+    val observePolicy = createWheelViewportMeasurePolicy(
+      orientation = WheelOrientation.Vertical,
+      itemSizePx = 48,
+      unfocusedCount = 2,
+      viewportState = observeViewportState,
+      onResolvedUnfocusedCount = { safeCount ->
+        observeState.updateViewportUnfocusedCount(
+          owner = observeOwner,
+          unfocusedCount = safeCount,
+        )
+      },
+    )
+    val observeScope = FakeMeasureScope(backingDensity = density)
+    val observeList = ThrowingIntrinsicMeasurable(measuredWidth = 80, measuredHeight = 48)
+    val observeFocus = FakeBoxMeasurable(intrinsicCrossSize = 72)
+    val measureObservedReads = mutableListOf<Any>()
+    Snapshot.observe(readObserver = { measureObservedReads.add(it) }) {
+      with(observePolicy) {
+        observeScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 20))
+      }
+    }
+    assertTrue(measureObservedReads.isEmpty())
+    assertTrue(observeViewportState.shouldClip)
+    assertEquals(0.dp, observeViewportState.contentPadding.calculateTopPadding())
+    assertEquals(-1f, observeState.scrollPercentageOf(1)!!, 0.0001f)
+
     runBlocking {
       val controller = FakeWheelScrollController(initialIndex = 5)
       val state = WheelPickerState(initialIndex = 5, scrollController = controller)

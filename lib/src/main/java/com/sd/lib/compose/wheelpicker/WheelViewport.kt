@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -121,8 +122,10 @@ internal class WheelViewportState(
   }
 
   fun updateClip(clip: Boolean) {
-    if (shouldClip != clip) {
-      shouldClip = clip
+    Snapshot.withoutReadObservation {
+      if (shouldClip != clip) {
+        shouldClip = clip
+      }
     }
   }
 }
@@ -139,11 +142,13 @@ private class WheelPaddingValues(
     orientation: WheelOrientation,
     paddingDp: Dp,
   ) {
-    if (_orientation != orientation) {
-      _orientation = orientation
-    }
-    if (_paddingDp != paddingDp) {
-      _paddingDp = paddingDp
+    Snapshot.withoutReadObservation {
+      if (_orientation != orientation) {
+        _orientation = orientation
+      }
+      if (_paddingDp != paddingDp) {
+        _paddingDp = paddingDp
+      }
     }
   }
 
