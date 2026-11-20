@@ -37,6 +37,7 @@ internal class WheelScrollExecutor(
     animate: Boolean,
   ) {
     store.clearAwaitingFlingHandoff()
+    store.syncLiveCount()
     val currentAttachment = store.attachment
     if (currentAttachment == null || currentAttachment.count <= 0) {
       val requestedIndex = index.coerceAtLeast(0)
@@ -72,6 +73,7 @@ internal class WheelScrollExecutor(
     } finally {
       if (_activeRequestId == requestId) {
         _activeRequestId = 0L
+        store.syncLiveCount()
         val latestAttachment = store.attachment
         if (latestAttachment != null && latestAttachment.count > 0) {
           store.pendingTargetIndex = null
@@ -87,6 +89,7 @@ internal class WheelScrollExecutor(
 
   /** 静止且停留在非零像素偏移时归位至最近条目，返回是否正常完成 */
   suspend fun performAutoSnap(owner: Any): Boolean {
+    store.syncLiveCount()
     val currentAttachment = store.attachment
     if (currentAttachment?.owner !== owner || currentAttachment.count <= 0) {
       return false
@@ -160,6 +163,7 @@ internal class WheelScrollExecutor(
 
     currentCoroutineContext().ensureActive()
     if (!completedNormally) {
+      store.syncLiveCount()
       val latestAttachment = store.attachment
       if (latestAttachment == null || latestAttachment.count <= 0) {
         return

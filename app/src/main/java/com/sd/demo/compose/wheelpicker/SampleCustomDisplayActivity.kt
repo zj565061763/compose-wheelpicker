@@ -65,7 +65,7 @@ private fun Content(
         )
         VerticalWheelPicker(
           modifier = Modifier.width(96.dp),
-          count = 30,
+          count = { 30 },
           state = wheel3dState,
           unfocusedCount = 3,
           display = { index ->
@@ -99,7 +99,7 @@ private fun Content(
         )
         VerticalWheelPicker(
           modifier = Modifier.width(96.dp),
-          count = 30,
+          count = { 30 },
           state = highlightState,
           unfocusedCount = 2,
           display = { index ->

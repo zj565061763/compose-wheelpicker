@@ -88,7 +88,7 @@ class WheelPickerInstrumentedTest {
           .onSizeChanged { verticalMeasuredSize = it },
       ) {
         VerticalWheelPicker(
-          count = 20,
+          count = { 20 },
           itemHeight = itemSizeDp,
           unfocusedCount = 2,
           focus = {
@@ -106,7 +106,7 @@ class WheelPickerInstrumentedTest {
           .onSizeChanged { horizontalMeasuredSize = it },
       ) {
         HorizontalWheelPicker(
-          count = 20,
+          count = { 20 },
           itemWidth = itemSizeDp,
           unfocusedCount = 2,
           focus = {
@@ -119,7 +119,7 @@ class WheelPickerInstrumentedTest {
 
       Box(modifier = Modifier.size(width = 60.dp, height = 24.dp)) {
         VerticalWheelPicker(
-          count = 10,
+          count = { 10 },
           state = tightState,
           itemHeight = 48.dp,
           unfocusedCount = 2,
@@ -134,7 +134,7 @@ class WheelPickerInstrumentedTest {
       CompositionLocalProvider(LocalDensity provides Density(1f)) {
         Box(modifier = Modifier.size(width = 120.dp, height = 160.dp)) {
           VerticalWheelPicker(
-            count = 3,
+            count = { 3 },
             state = hugeVerticalState,
             itemHeight = 400_000.dp,
             unfocusedCount = 2,
@@ -166,7 +166,7 @@ class WheelPickerInstrumentedTest {
             .height(IntrinsicSize.Min),
         ) {
           HorizontalWheelPicker(
-            count = 1,
+            count = { 1 },
             state = hugeHorizontalState,
             itemWidth = 400_000.dp,
             unfocusedCount = 2,
@@ -236,7 +236,7 @@ class WheelPickerInstrumentedTest {
         ) {
           VerticalWheelPicker(
             modifier = Modifier.testTag("sheetWheel"),
-            count = 150,
+            count = { 150 },
             state = state,
             itemHeight = 40.dp,
             unfocusedCount = 2,
@@ -300,7 +300,7 @@ class WheelPickerInstrumentedTest {
       composeScope = rememberCoroutineScope()
       VerticalWheelPicker(
         modifier = Modifier.testTag("interruptWheel"),
-        count = items.size,
+        count = { items.size },
         state = state,
         itemHeight = 44.dp,
         unfocusedCount = 2,
@@ -352,7 +352,7 @@ class WheelPickerInstrumentedTest {
     composeRule.setContent {
       CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         HorizontalWheelPicker(
-          count = 6,
+          count = { 6 },
           state = rtlState,
           itemWidth = 50.dp,
           unfocusedCount = 2,
@@ -419,7 +419,7 @@ class WheelPickerInstrumentedTest {
       if (visible) {
         VerticalWheelPicker(
           modifier = Modifier.testTag("shrinkWheel"),
-          count = stateList.size,
+          count = { stateList.size },
           state = state,
           itemHeight = 48.dp,
           unfocusedCount = 2,
@@ -516,7 +516,7 @@ class WheelPickerInstrumentedTest {
       composeScope = rememberCoroutineScope()
       VerticalWheelPicker(
         modifier = Modifier.testTag("semanticsWheel"),
-        count = 30,
+        count = { 30 },
         state = state,
         itemHeight = 40.dp,
         unfocusedCount = 2,
@@ -590,7 +590,7 @@ class WheelPickerInstrumentedTest {
         Layout(
           content = {
             VerticalWheelPicker(
-              count = 12,
+              count = { 12 },
               state = scrollState,
               itemHeight = 40.dp,
               unfocusedCount = 2,
@@ -620,7 +620,7 @@ class WheelPickerInstrumentedTest {
       Layout(
         content = {
           HorizontalWheelPicker(
-            count = 12,
+            count = { 12 },
             state = animateState,
             itemWidth = 40.dp,
             unfocusedCount = 2,
@@ -641,7 +641,7 @@ class WheelPickerInstrumentedTest {
       when (remountStage) {
         0 -> {
           VerticalWheelPicker(
-            count = 1,
+            count = { 1 },
             state = remountAnimateState,
             itemHeight = 40.dp,
             unfocusedCount = 2,
@@ -657,7 +657,7 @@ class WheelPickerInstrumentedTest {
           Layout(
             content = {
               VerticalWheelPicker(
-                count = 20,
+                count = { 20 },
                 state = remountAnimateState,
                 itemHeight = 40.dp,
                 unfocusedCount = 2,
@@ -792,7 +792,7 @@ class WheelPickerInstrumentedTest {
       ) {
         VerticalWheelPicker(
           modifier = Modifier.testTag("headShrinkWheel"),
-          count = items.size,
+          count = { items.size },
           state = state,
           key = { items[it] },
           itemHeight = 48.dp,
@@ -909,5 +909,75 @@ class WheelPickerInstrumentedTest {
     } finally {
       composeRule.mainClock.autoAdvance = true
     }
+  }
+
+  @Test
+  fun testShrinkAndImmediateScrollToIndexBeforeRecompositionDoesNotCrash() {
+    val stateList = mutableStateListOf<String>().also { list ->
+      repeat(12) { list.add("StateItem-$it") }
+    }
+    var boxedItems by mutableStateOf((0..11).map { "BoxedItem-$it" })
+    val verticalState = WheelPickerState(initialIndex = 8)
+    val horizontalState = WheelPickerState(initialIndex = 8)
+    lateinit var composeScope: CoroutineScope
+    var snappedRightAfterVerticalJump = -1
+    var snappedRightAfterHorizontalJump = -1
+
+    composeRule.setContent {
+      composeScope = rememberCoroutineScope()
+
+      VerticalWheelPicker(
+        count = { stateList.size },
+        state = verticalState,
+        key = { stateList[it] },
+        itemHeight = 48.dp,
+        unfocusedCount = 2,
+      ) { index ->
+        BasicText(text = stateList[index])
+      }
+
+      HorizontalWheelPicker(
+        count = { boxedItems.size },
+        state = horizontalState,
+        itemWidth = 48.dp,
+        unfocusedCount = 2,
+      ) { index ->
+        BasicText(text = boxedItems[index])
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(8, verticalState.snappedIndex)
+    assertEquals(8, horizontalState.snappedIndex)
+
+    // 同一次主线程回调中将 12 项缩容至 1 项并立即 launch scrollToIndex(0)，重测不越界且跳转返回当下已完成吸附结算
+    composeRule.runOnUiThread {
+      stateList.removeRange(1, 12)
+      composeScope.launch {
+        verticalState.scrollToIndex(0)
+        snappedRightAfterVerticalJump = verticalState.snappedIndex
+      }
+
+      boxedItems = listOf("BoxedItem-0")
+      composeScope.launch {
+        horizontalState.scrollToIndex(0)
+        snappedRightAfterHorizontalJump = horizontalState.snappedIndex
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(0, snappedRightAfterVerticalJump)
+    assertEquals(0, verticalState.snappedIndex)
+    assertEquals(0, verticalState.currentIndex)
+    assertEquals("StateItem-0", stateList[verticalState.snappedIndex])
+    composeRule.onNodeWithText("StateItem-0").assertIsDisplayed()
+    composeRule.onNodeWithText("StateItem-0").assertIsSelected()
+
+    assertEquals(0, snappedRightAfterHorizontalJump)
+    assertEquals(0, horizontalState.snappedIndex)
+    assertEquals(0, horizontalState.currentIndex)
+    assertEquals("BoxedItem-0", boxedItems[horizontalState.snappedIndex])
+    composeRule.onNodeWithText("BoxedItem-0").assertIsDisplayed()
+    composeRule.onNodeWithText("BoxedItem-0").assertIsSelected()
   }
 }

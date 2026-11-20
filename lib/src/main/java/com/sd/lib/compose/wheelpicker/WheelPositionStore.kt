@@ -17,7 +17,9 @@ internal class WheelPositionStore(
   private val scrollController: WheelScrollController,
 ) {
   private var _observerOwner: Any? = null
+  private var _flingGuardRequested = false
   private var _hasFlingGuard = false
+  private var _countProvider: (() -> Int)? = null
   private var _nextHandoffId = 0
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
@@ -175,6 +177,7 @@ internal class WheelPositionStore(
     itemSizePx: Int,
     reverseVisualDirection: Boolean,
     flingGuardEnabled: Boolean,
+    countProvider: (() -> Int)? = null,
   ) {
     val previousAttachment = attachment
     if (previousAttachment == null || previousAttachment.owner !== owner) {
@@ -184,6 +187,8 @@ internal class WheelPositionStore(
     }
     _unfocusedCount = unfocusedCount
     _reverseVisualDirection = reverseVisualDirection
+    _flingGuardRequested = flingGuardEnabled
+    _countProvider = countProvider
     _hasFlingGuard = flingGuardEnabled && count > 0
     if (!_hasFlingGuard) {
       awaitingHandoffId = 0
@@ -256,6 +261,26 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 从挂载的条目数提供者同步最新条目总数，返回同步后的有效条目数，未挂载时返回null */
+  fun syncLiveCount(): Int? {
+    val current = attachment ?: return null
+    val provider = _countProvider ?: return current.count
+    val liveCount = provider()
+    require(liveCount >= 0) { "require count >= 0, but was $liveCount" }
+    if (liveCount != current.count) {
+      updateAttachment(
+        owner = current.owner,
+        count = liveCount,
+        unfocusedCount = _unfocusedCount,
+        itemSizePx = current.itemSizePx,
+        reverseVisualDirection = _reverseVisualDirection,
+        flingGuardEnabled = _flingGuardRequested,
+        countProvider = provider,
+      )
+    }
+    return liveCount
+  }
+
   /** 卸载[owner]绑定的滚轮，保存最近有效索引并重置挂载与吸附状态 */
   fun detach(owner: Any): Boolean {
     val current = attachment
@@ -273,6 +298,8 @@ internal class WheelPositionStore(
         lastKnownIndex = lastIndex
       }
     }
+    _flingGuardRequested = false
+    _countProvider = null
     _hasFlingGuard = false
     isDragged = false
     awaitingHandoffId = 0

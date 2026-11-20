@@ -59,7 +59,7 @@ private fun Content(
 
     VerticalWheelPicker(
       modifier = Modifier.width(80.dp),
-      count = ITEM_COUNT,
+      count = { ITEM_COUNT },
       state = state,
     ) { index ->
       Text(text = index.toString())

@@ -12,7 +12,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -25,7 +27,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
-import java.io.Serializable
 
 /**
  * 垂直滚轮选择器
@@ -33,7 +34,7 @@ import java.io.Serializable
  * 外层按固有尺寸测量宽度时，需通过[modifier]或[focus]指定宽度。
  *
  * @param modifier 修饰符
- * @param count 条目总数，要求 >= 0
+ * @param count 条目总数，要求返回值 >= 0；绑定动态列表时建议在 lambda 内直接读取长度
  * @param state 滚轮状态
  * @param key 条目唯一标识，行为与[LazyColumn]一致，用于在常规数据增删或移动时保持当前选中项
  * @param itemHeight 单个条目高度，要求为大于 0.dp 的有限值
@@ -47,7 +48,7 @@ import java.io.Serializable
 @Composable
 fun VerticalWheelPicker(
   modifier: Modifier = Modifier,
-  count: Int,
+  count: () -> Int,
   state: WheelPickerState = rememberWheelPickerState(),
   key: ((index: Int) -> Any)? = null,
   itemHeight: Dp = 48.dp,
@@ -80,7 +81,7 @@ fun VerticalWheelPicker(
  * 外层按固有尺寸测量高度时，需通过[modifier]或[focus]指定高度。
  *
  * @param modifier 修饰符
- * @param count 条目总数，要求 >= 0
+ * @param count 条目总数，要求返回值 >= 0；绑定动态列表时建议在 lambda 内直接读取长度
  * @param state 滚轮状态
  * @param key 条目唯一标识，行为与[LazyRow]一致，用于在常规数据增删或移动时保持当前选中项
  * @param itemWidth 单个条目宽度，要求为大于 0.dp 的有限值
@@ -94,7 +95,7 @@ fun VerticalWheelPicker(
 @Composable
 fun HorizontalWheelPicker(
   modifier: Modifier = Modifier,
-  count: Int,
+  count: () -> Int,
   state: WheelPickerState = rememberWheelPickerState(),
   key: ((index: Int) -> Any)? = null,
   itemWidth: Dp = 48.dp,
@@ -126,7 +127,7 @@ fun HorizontalWheelPicker(
 private fun WheelPicker(
   modifier: Modifier = Modifier,
   orientation: WheelOrientation,
-  count: Int,
+  count: () -> Int,
   state: WheelPickerState,
   key: ((index: Int) -> Any)?,
   itemSize: Dp,
@@ -137,9 +138,22 @@ private fun WheelPicker(
   display: @Composable WheelPickerDisplayScope.(index: Int) -> Unit,
   content: @Composable (index: Int) -> Unit,
 ) {
-  require(count >= 0) { "require count >= 0, but was $count" }
   require(itemSize.value.isFinite() && itemSize > 0.dp) { "require finite itemSize > 0.dp, but was $itemSize" }
   require(unfocusedCount >= 0) { "require unfocusedCount >= 0, but was $unfocusedCount" }
+
+  val latestCountState = rememberUpdatedState(count)
+  val latestKeyState = rememberUpdatedState(key)
+  val resolvedCountState = remember {
+    derivedStateOf {
+      val value = latestCountState.value()
+      require(value >= 0) { "require count >= 0, but was $value" }
+      value
+    }
+  }
+  val resolvedCount = resolvedCountState.value
+  val countProvider: () -> Int = remember(latestCountState) {
+    { latestCountState.value() }
+  }
 
   val owner = remember(state) { Any() }
   val density = LocalDensity.current
@@ -164,7 +178,7 @@ private fun WheelPicker(
     layoutDirection = layoutDirection,
   )
 
-  val scrollEnabled = userScrollEnabled && (count > 0)
+  val scrollEnabled = userScrollEnabled && (resolvedCount > 0)
   val flingGuardConnection = remember(state, owner) {
     object : NestedScrollConnection {
       override suspend fun onPreFling(available: Velocity): Velocity {
@@ -182,11 +196,12 @@ private fun WheelPicker(
   SideEffect {
     state.updateAttachment(
       owner = owner,
-      count = count,
+      count = resolvedCount,
       unfocusedCount = resolvedUnfocusedCount,
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
-      flingGuardEnabled = scrollEnabled,
+      flingGuardEnabled = userScrollEnabled,
+      countProvider = countProvider,
     )
   }
 
@@ -206,34 +221,23 @@ private fun WheelPicker(
     content = content,
   )
   val flingBehavior = rememberSnapFlingBehavior(lazyListState = state.lazyListState)
-  val safeLazyKey: ((Int) -> Any)? = remember(key) {
-    if (key == null) {
-      null
-    } else {
-      { index ->
-        try {
-          key(index)
-        } catch (_: IndexOutOfBoundsException) {
-          RemovedWheelItemKey(index)
-        }
-      }
-    }
-  }
   val itemModifier = remember(orientation, itemSizePx) {
     Modifier.itemMainAxisSize(orientation = orientation, sizePx = itemSizePx)
   }
   val lazyListContent: LazyListScope.() -> Unit = remember(
-    count,
     state,
-    safeLazyKey,
+    latestCountState,
+    latestKeyState,
     itemModifier,
     displayHolder,
   ) {
     {
-      if (count > 0) {
+      val itemCount = latestCountState.value()
+      require(itemCount >= 0) { "require count >= 0, but was $itemCount" }
+      if (itemCount > 0) {
         items(
-          count = count,
-          key = safeLazyKey,
+          count = itemCount,
+          key = latestKeyState.value,
         ) { index ->
           Box(
             modifier = itemModifier.semantics(mergeDescendants = true) {
@@ -322,7 +326,3 @@ private fun WheelLazyList(
     }
   }
 }
-
-private data class RemovedWheelItemKey(
-  val index: Int,
-) : Serializable

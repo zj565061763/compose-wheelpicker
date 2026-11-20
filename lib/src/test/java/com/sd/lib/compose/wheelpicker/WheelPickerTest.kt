@@ -13,9 +13,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.remember
@@ -1107,7 +1109,6 @@ class WheelPickerTest {
       val state = WheelPickerState(initialIndex = 0, scrollController = controller)
       var visible by mutableStateOf(true)
       var items by mutableStateOf(listOf("A", "B", "C"))
-      var mismatchCount by mutableIntStateOf(3)
 
       val harness = WheelCompositionHarness(
         parentContext = coroutineContext,
@@ -1117,7 +1118,7 @@ class WheelPickerTest {
       try {
         harness.composeToggleableWheel(
           visibleProvider = { visible },
-          countProvider = { mismatchCount },
+          countProvider = { items.size },
           keyProvider = {
             val snapshot = items
             val fn: (Int) -> Any = { idx -> snapshot[idx] }
@@ -1132,22 +1133,92 @@ class WheelPickerTest {
         }
         assertEquals(2, state.snappedIndex)
 
-        // count 瞬时大于底层列表长度时 safeLazyKey 兜底不抛越界异常
-        mismatchCount = 5
-        harness.stepFrame()
-
         // 卸载期间数据重排且请求跳到与卸载前相同的索引 2，重新挂载时不应被残留旧 key 拉回索引 0
         visible = false
         harness.stepFrame()
         assertEquals(-1, state.snappedIndex)
 
         items = listOf("C", "A", "B")
-        mismatchCount = items.size
         state.scrollToIndex(2)
         visible = true
         harness.stepFrame()
         assertEquals(2, state.snappedIndex)
         assertEquals("B", items[state.snappedIndex])
+      } finally {
+        harness.dispose()
+      }
+    }
+  }
+
+  @Test
+  fun testShrinkBeforeRecompositionScrollToIndexSyncsLiveCountWithoutOutOfBounds() {
+    runBlocking {
+      val controller = FakeWheelScrollController(initialIndex = 8).apply {
+        supportsNativeWindowTracking = true
+      }
+      val state = WheelPickerState(initialIndex = 8, scrollController = controller)
+      val stateList = mutableStateListOf<String>().also { list ->
+        repeat(12) { list.add("Item-$it") }
+      }
+      val renderedValues = mutableListOf<String>()
+
+      val harness = WheelCompositionHarness(
+        parentContext = coroutineContext,
+        controller = controller,
+        state = state,
+      )
+      try {
+        harness.composeLiveListWheel(
+          count = { stateList.size },
+          key = { stateList[it] },
+          onRenderItem = { index -> renderedValues.add(stateList[index]) },
+        )
+        harness.stepFrame()
+        assertEquals(8, state.snappedIndex)
+
+        // 1. 同一操作中将 SnapshotStateList 从 12 项缩容至 1 项并立即在重组前调用 scrollToIndex(0)，不越界且立即结算 snappedIndex
+        renderedValues.clear()
+        stateList.removeRange(1, 12)
+        state.scrollToIndex(0)
+        assertEquals(0, state.snappedIndex)
+        assertEquals(0, state.currentIndex)
+        assertEquals(listOf("Item-0"), renderedValues)
+
+        harness.stepFrame()
+        assertEquals(0, state.snappedIndex)
+        assertEquals("Item-0", stateList[state.snappedIndex])
+
+        // 2. 重组前清空列表并立即调用 scrollToIndex(3)，转为预跳转记录目标并在后续恢复数据时定位到 3
+        stateList.addAll((1..5).map { "Extra-$it" })
+        harness.stepFrame()
+        state.scrollToIndex(4)
+        assertEquals(4, state.snappedIndex)
+
+        stateList.clear()
+        state.scrollToIndex(3)
+        assertEquals(-1, state.snappedIndex)
+
+        stateList.addAll((0..6).map { "Restored-$it" })
+        harness.stepFrame()
+        assertEquals(3, state.snappedIndex)
+        assertEquals("Restored-3", stateList[state.snappedIndex])
+
+        // 3. 动态 count 返回负数时立即抛出 IllegalArgumentException
+        var negativeCountRejected = false
+        val invalidState = WheelPickerState(initialIndex = 0, scrollController = FakeWheelScrollController(0))
+        invalidState.updateAttachment(
+          owner = Any(),
+          count = 1,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+          countProvider = { -1 },
+        )
+        try {
+          invalidState.scrollToIndex(0)
+        } catch (_: IllegalArgumentException) {
+          negativeCountRejected = true
+        }
+        assertTrue(negativeCountRejected)
       } finally {
         harness.dispose()
       }
@@ -1457,8 +1528,22 @@ private class WheelCompositionHarness(
   ) {
     setRootContent {
       WheelAttachmentNode(
-        count = countProvider(),
+        count = countProvider,
         key = keyProvider(),
+      )
+    }
+  }
+
+  fun composeLiveListWheel(
+    count: () -> Int,
+    key: ((Int) -> Any)?,
+    onRenderItem: (Int) -> Unit,
+  ) {
+    setRootContent {
+      WheelAttachmentNode(
+        count = count,
+        key = key,
+        onRenderItem = onRenderItem,
       )
     }
   }
@@ -1485,9 +1570,9 @@ private class WheelCompositionHarness(
       val second = branchProvider()
       state.SnappedIndex(onSnapped)
       if (!second) {
-        WheelAttachmentNode(count = 10, key = null)
+        WheelAttachmentNode(count = { 10 }, key = null)
       } else {
-        WheelAttachmentNode(count = 10, key = null)
+        WheelAttachmentNode(count = { 10 }, key = null)
       }
       onReadCurrentIndex(state.currentIndex)
     }
@@ -1501,7 +1586,7 @@ private class WheelCompositionHarness(
     setRootContent {
       if (visibleProvider()) {
         WheelAttachmentNode(
-          count = countProvider(),
+          count = countProvider,
           key = keyProvider(),
         )
       }
@@ -1514,7 +1599,7 @@ private class WheelCompositionHarness(
     userScrollEnabled: Boolean = false,
   ) {
     WheelAttachmentNode(
-      count = items.size,
+      count = { items.size },
       key = { items[it] },
       userScrollEnabled = userScrollEnabled,
     )
@@ -1522,45 +1607,51 @@ private class WheelCompositionHarness(
 
   @Composable
   private fun WheelAttachmentNode(
-    count: Int,
+    count: () -> Int,
     key: ((Int) -> Any)?,
     userScrollEnabled: Boolean = false,
+    onRenderItem: ((Int) -> Unit)? = null,
   ) {
     val owner = remember(state) { Any() }
+    val latestCountState = rememberUpdatedState(count)
+    val latestKeyState = rememberUpdatedState(key)
+    val latestRenderState = rememberUpdatedState(onRenderItem)
+    val resolvedCount = remember {
+      derivedStateOf {
+        val value = latestCountState.value()
+        require(value >= 0) { "require count >= 0, but was $value" }
+        value
+      }
+    }.value
+    val countProvider: () -> Int = remember(latestCountState) {
+      { latestCountState.value() }
+    }
     rememberWheelPickerDisplayHolder(
       state = state,
       display = { },
       content = { },
     )
-    val safeLazyKey: ((Int) -> Any)? = remember(key) {
-      if (key == null) {
-        null
-      } else {
-        { index ->
-          try {
-            key(index)
-          } catch (_: IndexOutOfBoundsException) {
-            "removed-$index"
-          }
-        }
-      }
-    }
-    val lazyListContentToken = remember(count, safeLazyKey) { Any() }
-    rememberUpdatedState(lazyListContentToken)
     SideEffect {
       latestOwner = owner
-      _latestCount = count
-      _latestKey = safeLazyKey
+      _latestCount = resolvedCount
+      _latestKey = latestKeyState.value
+      controller.liveMeasureSpec = {
+        Triple(latestCountState.value(), latestKeyState.value, latestRenderState.value)
+      }
       state.updateAttachment(
         owner = owner,
-        count = count,
+        count = resolvedCount,
         unfocusedCount = 2,
         itemSizePx = 48,
-        flingGuardEnabled = userScrollEnabled && count > 0,
+        flingGuardEnabled = userScrollEnabled,
+        countProvider = countProvider,
       )
     }
     DisposableEffect(state, owner) {
       onDispose {
+        if (latestOwner === owner) {
+          controller.liveMeasureSpec = null
+        }
         state.detach(owner)
       }
     }
@@ -1578,7 +1669,12 @@ private class WheelCompositionHarness(
     _measuredOwner = latestOwner
     _measuredCount = _latestCount
     _measuredKey = _latestKey
-    controller.applyMeasure(count = _latestCount, key = _latestKey)
+    val spec = controller.liveMeasureSpec?.invoke()
+    controller.applyMeasure(
+      count = spec?.first ?: _latestCount,
+      key = spec?.second ?: _latestKey,
+      onRenderItem = spec?.third,
+    )
   }
 
   suspend fun stepFrame() {
@@ -1599,11 +1695,18 @@ private class WheelCompositionHarness(
   }
 
   private fun applyPendingMeasure() {
-    if (_measuredOwner !== latestOwner || _measuredCount != _latestCount || _measuredKey !== _latestKey) {
+    val spec = controller.liveMeasureSpec?.invoke()
+    val targetCount = spec?.first ?: _latestCount
+    val targetKey = spec?.second ?: _latestKey
+    if (_measuredOwner !== latestOwner || _measuredCount != targetCount || _measuredKey !== targetKey) {
       _measuredOwner = latestOwner
-      _measuredCount = _latestCount
-      _measuredKey = _latestKey
-      controller.applyMeasure(count = _latestCount, key = _latestKey)
+      _measuredCount = targetCount
+      _measuredKey = targetKey
+      controller.applyMeasure(
+        count = targetCount,
+        key = targetKey,
+        onRenderItem = spec?.third,
+      )
       Snapshot.sendApplyNotifications()
     }
   }
@@ -1619,6 +1722,7 @@ private class WheelCompositionHarness(
   }
 
   fun dispose() {
+    controller.liveMeasureSpec = null
     _composition?.dispose()
     _recomposer.cancel()
     _recomposeJob.cancel()
@@ -1643,6 +1747,7 @@ private class FakeWheelScrollController(
   val animateTargetsRequested = mutableListOf<Int>()
   val completedAnimateTargets = mutableListOf<Int>()
 
+  var liveMeasureSpec: (() -> Triple<Int, ((Int) -> Any)?, ((Int) -> Unit)?>)? = null
   var isPlaced by mutableStateOf(true)
   var pauseAnimations = false
   var emulateRealLazyListAnimateTiming = false
@@ -1693,6 +1798,7 @@ private class FakeWheelScrollController(
     unfocusedCount: Int = 2,
     itemSizePx: Int = 48,
     key: ((Int) -> Any)? = null,
+    onRenderItem: ((Int) -> Unit)? = null,
   ) {
     _hasCurrentMountLayout = true
     val previousFirstIndex = firstVisibleItemIndex
@@ -1731,6 +1837,12 @@ private class FakeWheelScrollController(
         _lastKnownFirstItemKey = _measuredKeys.getOrNull(firstVisibleItemIndex)
       } else {
         _lastKnownFirstItemKey = _measuredKeys.getOrNull(firstVisibleItemIndex)
+      }
+    }
+    if (count > 0 && onRenderItem != null) {
+      val lastVisible = (firstVisibleItemIndex + unfocusedCount * 2).coerceAtMost(count - 1)
+      for (visibleIndex in firstVisibleItemIndex..lastVisible) {
+        onRenderItem(visibleIndex)
       }
     }
     if (unfocusedCount < 0 || itemSizePx < 0) {
@@ -1785,7 +1897,17 @@ private class FakeWheelScrollController(
     _mutatorMutex.mutate {
       isScrollInProgress = true
       try {
-        if (totalItemsCount > 0) {
+        val spec = liveMeasureSpec?.invoke()
+        if (spec != null) {
+          firstVisibleItemIndex = index.coerceAtLeast(0)
+          firstVisibleItemScrollOffset = 0
+          _lastKnownFirstItemKey = null
+          applyMeasure(
+            count = spec.first,
+            key = spec.second,
+            onRenderItem = spec.third,
+          )
+        } else if (totalItemsCount > 0) {
           firstVisibleItemIndex = index.coerceIn(0, totalItemsCount - 1)
           firstVisibleItemScrollOffset = 0
           _lastKnownFirstItemKey = _measuredKeys.getOrNull(firstVisibleItemIndex)

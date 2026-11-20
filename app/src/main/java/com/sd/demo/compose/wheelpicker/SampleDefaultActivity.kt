@@ -63,7 +63,7 @@ private fun Content(
     )
     VerticalWheelPicker(
       modifier = Modifier.width(80.dp),
-      count = 50,
+      count = { 50 },
       state = verticalState,
       itemHeight = 48.dp,
       unfocusedCount = 2,
@@ -79,7 +79,7 @@ private fun Content(
     )
     HorizontalWheelPicker(
       modifier = Modifier.height(64.dp),
-      count = 50,
+      count = { 50 },
       state = horizontalState,
       itemWidth = 56.dp,
       unfocusedCount = 2,

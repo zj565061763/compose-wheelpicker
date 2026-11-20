@@ -59,7 +59,7 @@ private fun Content(
         )
         VerticalWheelPicker(
           modifier = Modifier.width(88.dp),
-          count = 50,
+          count = { 50 },
           reverseLayout = true,
         ) { index ->
           Text(text = index.toString())
@@ -79,7 +79,7 @@ private fun Content(
             .width(88.dp)
             .heightIn(max = 220.dp)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
-          count = 100,
+          count = { 100 },
           unfocusedCount = 20,
         ) { index ->
           Text(text = index.toString())

@@ -62,7 +62,7 @@ private fun Content(
         )
         VerticalWheelPicker(
           modifier = Modifier.width(88.dp),
-          count = 30,
+          count = { 30 },
           focus = {
             WheelPickerFocusVertical(
               thickness = 2.dp,
@@ -84,7 +84,7 @@ private fun Content(
         )
         VerticalWheelPicker(
           modifier = Modifier.width(88.dp),
-          count = 30,
+          count = { 30 },
           focus = {
             val shape = RoundedCornerShape(12.dp)
             Box(

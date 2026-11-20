@@ -85,21 +85,21 @@ private fun Content(
     ) {
       DateWheelColumn(
         modifier = Modifier.weight(1f),
-        count = MAX_YEAR - MIN_YEAR + 1,
+        count = { MAX_YEAR - MIN_YEAR + 1 },
         state = yearState,
         formatText = { index -> "${MIN_YEAR + index}年" },
       )
 
       DateWheelColumn(
         modifier = Modifier.weight(1f),
-        count = 12,
+        count = { 12 },
         state = monthState,
         formatText = { index -> "${(index + 1).twoDigits()}月" },
       )
 
       DateWheelColumn(
         modifier = Modifier.weight(1f),
-        count = dayCount,
+        count = { dayCount },
         state = dayState,
         formatText = { index -> "${(index + 1).twoDigits()}日" },
       )
@@ -110,7 +110,7 @@ private fun Content(
 @Composable
 private fun DateWheelColumn(
   modifier: Modifier = Modifier,
-  count: Int,
+  count: () -> Int,
   state: WheelPickerState,
   formatText: (index: Int) -> String,
 ) {

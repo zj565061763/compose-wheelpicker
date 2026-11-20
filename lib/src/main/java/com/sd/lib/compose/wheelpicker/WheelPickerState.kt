@@ -128,6 +128,7 @@ class WheelPickerState internal constructor(
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
     flingGuardEnabled: Boolean = false,
+    countProvider: (() -> Int)? = null,
   ) {
     val previousOwner = _store.attachment?.owner
     if (count <= 0 || (previousOwner != null && previousOwner !== owner)) {
@@ -140,6 +141,7 @@ class WheelPickerState internal constructor(
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
       flingGuardEnabled = flingGuardEnabled,
+      countProvider = countProvider,
     )
   }
 
