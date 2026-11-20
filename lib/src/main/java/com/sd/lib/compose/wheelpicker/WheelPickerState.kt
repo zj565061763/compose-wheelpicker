@@ -100,6 +100,11 @@ class WheelPickerState internal constructor(
     return _store.scrollPercentageOf(index)
   }
 
+  /** 订阅帧间实时条目数同步失效通知 */
+  internal fun attachLiveCountSync() {
+    _store.attachLiveCountSync()
+  }
+
   internal fun updateViewportUnfocusedCount(
     owner: Any,
     unfocusedCount: Int,

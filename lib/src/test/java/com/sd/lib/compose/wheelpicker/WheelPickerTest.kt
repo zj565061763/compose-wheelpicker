@@ -1480,6 +1480,61 @@ class WheelPickerTest {
       }
     }
   }
+
+  @Test
+  fun testSameFrameMutateScrollAndRestoreOriginalCountSyncsState() {
+    runBlocking {
+      val controller = FakeWheelScrollController(initialIndex = 2).also {
+        it.supportsNativeWindowTracking = true
+      }
+      val state = WheelPickerState(initialIndex = 2, scrollController = controller)
+      val stateList = mutableStateListOf<String>().also { list ->
+        repeat(10) { list.add("Init-$it") }
+      }
+
+      val harness = WheelCompositionHarness(
+        parentContext = coroutineContext,
+        controller = controller,
+        state = state,
+      )
+      try {
+        harness.composeLiveListWheel(
+          count = { stateList.size },
+          key = { stateList[it] },
+          onRenderItem = { index -> stateList[index] },
+        )
+        harness.stepFrame()
+        assertEquals(2, state.snappedIndex)
+        assertEquals(2, state.currentIndex)
+
+        // 1. 同帧内 10 -> 0 -> scrollToIndex(7) -> 回填 10 项：重组测量后正常定位到 7，scrollPercentageOf 非空
+        stateList.clear()
+        state.scrollToIndex(7)
+        assertEquals(-1, state.snappedIndex)
+        repeat(10) { stateList.add("Refilled-$it") }
+
+        harness.stepFrame()
+        assertEquals(7, state.currentIndex)
+        assertEquals(7, state.snappedIndex)
+        assertEquals(0f, state.scrollPercentageOf(7))
+        assertEquals("Refilled-7", stateList[state.snappedIndex])
+
+        // 2. 同帧内 10 -> 20 -> scrollToIndex(17) -> 缩回 10 项：currentIndex 与 snappedIndex 均收敛至 9 不越界
+        repeat(10) { stateList.add("Expanded-${it + 10}") }
+        state.scrollToIndex(17)
+        assertEquals(17, state.snappedIndex)
+        stateList.removeRange(10, 20)
+
+        harness.stepFrame()
+        assertEquals(9, state.currentIndex)
+        assertEquals(9, state.snappedIndex)
+        assertEquals(0f, state.scrollPercentageOf(9))
+        assertEquals("Refilled-9", stateList[state.snappedIndex])
+      } finally {
+        harness.dispose()
+      }
+    }
+  }
 }
 
 private class EmptyApplier : AbstractApplier<Unit>(Unit) {
@@ -1623,6 +1678,7 @@ private class WheelCompositionHarness(
         value
       }
     }.value
+    state.attachLiveCountSync()
     val countProvider: () -> Int = remember(latestCountState) {
       { latestCountState.value() }
     }
@@ -1698,7 +1754,12 @@ private class WheelCompositionHarness(
     val spec = controller.liveMeasureSpec?.invoke()
     val targetCount = spec?.first ?: _latestCount
     val targetKey = spec?.second ?: _latestKey
-    if (_measuredOwner !== latestOwner || _measuredCount != targetCount || _measuredKey !== targetKey) {
+    if (
+      _measuredOwner !== latestOwner ||
+      _measuredCount != targetCount ||
+      controller.totalItemsCount != targetCount ||
+      _measuredKey !== targetKey
+    ) {
       _measuredOwner = latestOwner
       _measuredCount = targetCount
       _measuredKey = targetKey

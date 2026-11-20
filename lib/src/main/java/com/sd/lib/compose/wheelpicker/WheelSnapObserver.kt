@@ -93,6 +93,7 @@ internal class WheelSnapObserver(
     snapshotFlow {
       ObserveSnapshot(
         attachment = store.attachment,
+        liveCount = store.readLiveCount(owner),
         isScrollInProgress = scrollController.isScrollInProgress,
         isDragged = store.isDragged,
         awaitingHandoffId = store.awaitingHandoffId,
@@ -104,6 +105,12 @@ internal class WheelSnapObserver(
         totalItemsCount = scrollController.totalItemsCount,
       )
     }.collect { _ ->
+      if (store.attachment?.owner === owner) {
+        val syncedCount = store.syncLiveCount()
+        if (syncedCount != null && syncedCount <= 0) {
+          scrollExecutor.cancelActiveScroll()
+        }
+      }
       val initialAttachment = store.attachment
       if (initialAttachment?.owner !== owner) {
         wasActiveGestureOrScroll = false
@@ -234,6 +241,7 @@ internal class WheelSnapObserver(
 
 private data class ObserveSnapshot(
   val attachment: WheelAttachment?,
+  val liveCount: Int?,
   val isScrollInProgress: Boolean,
   val isDragged: Boolean,
   val awaitingHandoffId: Int,

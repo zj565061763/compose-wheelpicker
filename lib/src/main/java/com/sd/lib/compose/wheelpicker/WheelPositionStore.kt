@@ -4,6 +4,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.setValue
 
 internal data class WheelAttachment(
@@ -20,6 +21,7 @@ internal class WheelPositionStore(
   private var _flingGuardRequested = false
   private var _hasFlingGuard = false
   private var _countProvider: (() -> Int)? = null
+  private val _liveCountSyncInvalidator = mutableStateOf(Unit, neverEqualPolicy())
   private var _nextHandoffId = 0
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
@@ -261,6 +263,19 @@ internal class WheelPositionStore(
     }
   }
 
+  /** 订阅实时条目数同步失效通知，确保帧间改写挂载计数后即使条目数恢复原值也能触发重组同步 */
+  fun attachLiveCountSync() {
+    return _liveCountSyncInvalidator.value
+  }
+
+  /** 读取[owner]当前挂载提供者的实时条目数，未挂载或无提供者时返回null */
+  fun readLiveCount(owner: Any): Int? {
+    if (attachment?.owner !== owner) {
+      return null
+    }
+    return _countProvider?.invoke()
+  }
+
   /** 从挂载的条目数提供者同步最新条目总数，返回同步后的有效条目数，未挂载时返回null */
   fun syncLiveCount(): Int? {
     val current = attachment ?: return null
@@ -268,6 +283,7 @@ internal class WheelPositionStore(
     val liveCount = provider()
     require(liveCount >= 0) { "require count >= 0, but was $liveCount" }
     if (liveCount != current.count) {
+      _liveCountSyncInvalidator.value = Unit
       updateAttachment(
         owner = current.owner,
         count = liveCount,

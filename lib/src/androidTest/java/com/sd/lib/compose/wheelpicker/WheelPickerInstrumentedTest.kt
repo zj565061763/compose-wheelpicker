@@ -1,6 +1,9 @@
 package com.sd.lib.compose.wheelpicker
 
+import android.os.Build
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +25,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.Layout
@@ -33,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -1082,5 +1087,135 @@ class WheelPickerInstrumentedTest {
     assertEquals("BoxedItem-11", boxedItems[horizontalState.snappedIndex])
     composeRule.onNodeWithText("BoxedItem-11").assertIsDisplayed()
     composeRule.onNodeWithText("BoxedItem-11").assertIsSelected()
+  }
+
+  @Test
+  fun testSameFrameMutateScrollAndRestoreOriginalCountSyncsState() {
+    val stateList = mutableStateListOf<String>().also { list ->
+      repeat(10) { list.add("Init-$it") }
+    }
+    var boxedItems by mutableStateOf((0..9).map { "BoxedInit-$it" })
+    val verticalState = WheelPickerState(initialIndex = 2)
+    val horizontalState = WheelPickerState(initialIndex = 2)
+    lateinit var composeScope: CoroutineScope
+
+    composeRule.setContent {
+      composeScope = rememberCoroutineScope()
+
+      Column(modifier = Modifier.background(Color.White)) {
+        VerticalWheelPicker(
+          modifier = Modifier
+            .width(120.dp)
+            .testTag("sameFrameVerticalWheel"),
+          count = { stateList.size },
+          state = verticalState,
+          key = { stateList[it] },
+          itemHeight = 48.dp,
+          unfocusedCount = 2,
+          focus = {},
+        ) { index ->
+          Box(
+            modifier = Modifier
+              .fillMaxSize()
+              .background(Color.Red),
+          ) {
+            BasicText(text = stateList[index])
+          }
+        }
+
+        HorizontalWheelPicker(
+          modifier = Modifier
+            .height(64.dp)
+            .testTag("sameFrameHorizontalWheel"),
+          count = { boxedItems.size },
+          state = horizontalState,
+          itemWidth = 48.dp,
+          unfocusedCount = 2,
+          focus = {},
+        ) { index ->
+          Box(
+            modifier = Modifier
+              .fillMaxSize()
+              .background(Color.Blue),
+          ) {
+            BasicText(text = boxedItems[index])
+          }
+        }
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(2, verticalState.snappedIndex)
+    assertEquals(2, horizontalState.snappedIndex)
+
+    // 1. 同帧内 10 -> 0 -> scrollToIndex(7) -> 回填 10 项：snappedIndex 更新为 7 且默认展示非透明
+    composeRule.runOnUiThread {
+      composeScope.launch {
+        stateList.clear()
+        verticalState.scrollToIndex(7)
+        repeat(10) { stateList.add("Refilled-$it") }
+      }
+
+      composeScope.launch {
+        boxedItems = emptyList()
+        horizontalState.scrollToIndex(7)
+        boxedItems = (0..9).map { "BoxedRefilled-$it" }
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(7, verticalState.currentIndex)
+    assertEquals(7, verticalState.snappedIndex)
+    assertEquals(0f, verticalState.scrollPercentageOf(7))
+    assertEquals("Refilled-7", stateList[verticalState.snappedIndex])
+    composeRule.onNodeWithText("Refilled-7").assertIsDisplayed()
+    composeRule.onNodeWithText("Refilled-7").assertIsSelected()
+
+    assertEquals(7, horizontalState.currentIndex)
+    assertEquals(7, horizontalState.snappedIndex)
+    assertEquals(0f, horizontalState.scrollPercentageOf(7))
+    assertEquals("BoxedRefilled-7", boxedItems[horizontalState.snappedIndex])
+    composeRule.onNodeWithText("BoxedRefilled-7").assertIsDisplayed()
+    composeRule.onNodeWithText("BoxedRefilled-7").assertIsSelected()
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val verticalPixels = composeRule.onNodeWithTag("sameFrameVerticalWheel").captureToImage().toPixelMap()
+      val verticalCenter = verticalPixels[verticalPixels.width / 2, verticalPixels.height / 2]
+      assertTrue("Expected opaque red item at center, but got $verticalCenter", verticalCenter.red > 0.8f && verticalCenter.green < 0.2f)
+
+      val horizontalPixels = composeRule.onNodeWithTag("sameFrameHorizontalWheel").captureToImage().toPixelMap()
+      val horizontalCenter = horizontalPixels[horizontalPixels.width / 2, horizontalPixels.height / 2]
+      assertTrue("Expected opaque blue item at center, but got $horizontalCenter", horizontalCenter.blue > 0.8f && horizontalCenter.red < 0.2f)
+    }
+
+    // 2. 同帧内 10 -> 20 -> scrollToIndex(17) -> 缩回 10 项：currentIndex 与 snappedIndex 均收敛至 9 不越界
+    composeRule.runOnUiThread {
+      composeScope.launch {
+        repeat(10) { stateList.add("Expanded-${it + 10}") }
+        verticalState.scrollToIndex(17)
+        stateList.removeRange(10, 20)
+      }
+
+      composeScope.launch {
+        boxedItems = (0..19).map { "BoxedExpanded-$it" }
+        horizontalState.scrollToIndex(17)
+        boxedItems = boxedItems.take(10)
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(9, verticalState.currentIndex)
+    assertEquals(9, verticalState.snappedIndex)
+    assertEquals(0f, verticalState.scrollPercentageOf(9))
+    assertEquals("Refilled-9", stateList[verticalState.snappedIndex])
+    composeRule.onNodeWithText("Refilled-9").assertIsDisplayed()
+    composeRule.onNodeWithText("Refilled-9").assertIsSelected()
+
+    assertEquals(9, horizontalState.currentIndex)
+    assertEquals(9, horizontalState.snappedIndex)
+    assertEquals(0f, horizontalState.scrollPercentageOf(9))
+    assertEquals("BoxedExpanded-9", boxedItems[horizontalState.snappedIndex])
+    composeRule.onNodeWithText("BoxedExpanded-9").assertIsDisplayed()
+    composeRule.onNodeWithText("BoxedExpanded-9").assertIsSelected()
   }
 }
