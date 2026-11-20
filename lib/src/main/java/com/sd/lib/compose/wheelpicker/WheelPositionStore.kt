@@ -62,8 +62,11 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 判断底层可见项测量总数是否已与[expectedCount]同步 */
+  /** 判断底层测量条目总数是否已与[expectedCount]同步 */
   fun isLayoutSyncedWith(expectedCount: Int): Boolean {
+    if (scrollController.isPositioned) {
+      return scrollController.totalItemsCount == expectedCount
+    }
     return !scrollController.hasVisibleItems || scrollController.totalItemsCount == expectedCount
   }
 

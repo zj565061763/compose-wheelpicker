@@ -60,6 +60,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class WheelPickerTest {
@@ -652,68 +653,127 @@ class WheelPickerTest {
   @Test
   fun testConcurrentScrollPreemptionAndClocklessExceptionCleanup() {
     runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 0).apply {
-        pauseAnimations = true
-      }
-      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-      val items by mutableStateOf((0..29).toList())
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeWheelWithChildParam(itemsProvider = { items })
-        harness.stepFrame()
-        assertEquals(0, state.snappedIndex)
-
-        // 1. 正在执行的 animateScrollToIndex(15) 被后续 scrollToIndex(4) 抢占取消
-        var firstCancelled = false
-        val firstJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
-          try {
-            state.animateScrollToIndex(15)
-          } catch (_: CancellationException) {
-            firstCancelled = true
-          }
+      withTimeout(5.seconds) {
+        val controller = FakeWheelScrollController(initialIndex = 0).apply {
+          pauseAnimations = true
         }
-        assertTrue(state.isScrollInProgress)
+        val state = WheelPickerState(initialIndex = 0, scrollController = controller)
+        val items by mutableStateOf((0..29).toList())
 
-        state.scrollToIndex(4)
-        firstJob.join()
-        assertTrue(firstCancelled)
-        assertEquals(4, state.currentIndex)
-        assertEquals(4, state.snappedIndex)
-
-        // 2. 含 MonotonicFrameClock 的协程调用 animateScrollToIndex 正常完成
-        controller.pauseAnimations = false
-        controller.emulateRealLazyListAnimateTiming = true
-        val secondJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
-          state.animateScrollToIndex(12)
-        }
-        harness.advanceUntilIdle(secondJob)
-        assertEquals(12, state.currentIndex)
-        assertEquals(12, state.snappedIndex)
-
-        // 3. 无 MonotonicFrameClock 的外部协程调用 animateScrollToIndex 抛出 IllegalStateException 后，不残留执行状态且后续手势正常吸附更新
-        var missingClockThrown = false
+        val harness = WheelCompositionHarness(
+          parentContext = coroutineContext,
+          controller = controller,
+          state = state,
+        )
         try {
-          state.animateScrollToIndex(25)
-        } catch (_: IllegalStateException) {
-          missingClockThrown = true
-        }
-        assertTrue(missingClockThrown)
-        assertEquals(12, state.snappedIndex)
+          harness.composeWheelWithChildParam(itemsProvider = { items })
+          harness.stepFrame()
+          assertEquals(0, state.snappedIndex)
 
-        controller.beginGestureScroll(index = 28, offset = 30)
-        harness.stepFrame()
-        controller.endGestureScroll()
-        harness.stepFrame()
-        harness.stepFrame()
-        assertEquals(29, state.currentIndex)
-        assertEquals(29, state.snappedIndex)
-      } finally {
-        harness.dispose()
+          // 1. 正在执行的 animateScrollToIndex(15) 被后续 scrollToIndex(4) 抢占取消
+          var firstCancelled = false
+          val firstJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
+            try {
+              state.animateScrollToIndex(15)
+            } catch (_: CancellationException) {
+              firstCancelled = true
+            }
+          }
+          assertTrue(state.isScrollInProgress)
+
+          state.scrollToIndex(4)
+          firstJob.join()
+          assertTrue(firstCancelled)
+          assertEquals(4, state.currentIndex)
+          assertEquals(4, state.snappedIndex)
+
+          // 2. 取消旧动画时调用方在取消处理中同步发起新跳转，后发起的目标 10 生效且被抢占的跳转 4 抛出 CancellationException
+          val unconfinedScope = CoroutineScope(Dispatchers.Unconfined + harness.clock)
+          var reentrantScrollJob: Job? = null
+          val cancelledAnimJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+              state.animateScrollToIndex(15)
+            } catch (cancelled: CancellationException) {
+              reentrantScrollJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                state.scrollToIndex(10)
+              }
+              throw cancelled
+            }
+          }
+          assertTrue(state.isScrollInProgress)
+
+          var preemptedScrollCancelled = false
+          try {
+            state.scrollToIndex(4)
+          } catch (_: CancellationException) {
+            preemptedScrollCancelled = true
+          }
+          cancelledAnimJob.join()
+          reentrantScrollJob?.join()
+          assertTrue(preemptedScrollCancelled)
+          assertEquals(10, controller.firstVisibleItemIndex)
+          assertEquals(10, state.currentIndex)
+          assertEquals(10, state.snappedIndex)
+
+          // 取消旧动画时同步重入发起新动画 18，被抢占的跳转 4 抛出 CancellationException，新动画引用不被清空且推进完成后停在 18
+          var reentrantAnimateJob: Job? = null
+          val cancelledForReanimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+              state.animateScrollToIndex(15)
+            } catch (cancelled: CancellationException) {
+              reentrantAnimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                state.animateScrollToIndex(18)
+              }
+              throw cancelled
+            }
+          }
+          assertTrue(state.isScrollInProgress)
+
+          var preemptedForReanimateCancelled = false
+          try {
+            state.scrollToIndex(4)
+          } catch (_: CancellationException) {
+            preemptedForReanimateCancelled = true
+          }
+          cancelledForReanimateJob.join()
+          assertTrue(preemptedForReanimateCancelled)
+          assertTrue(state.isScrollInProgress)
+          controller.resumeActiveAnimation()
+          reentrantAnimateJob?.join()
+          harness.stepFrame()
+          assertEquals(18, state.currentIndex)
+          assertEquals(18, state.snappedIndex)
+
+          // 3. 含 MonotonicFrameClock 的协程调用 animateScrollToIndex 正常完成
+          controller.pauseAnimations = false
+          controller.emulateRealLazyListAnimateTiming = true
+          val secondJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
+            state.animateScrollToIndex(12)
+          }
+          harness.advanceUntilIdle(secondJob)
+          assertEquals(12, state.currentIndex)
+          assertEquals(12, state.snappedIndex)
+
+          // 4. 无 MonotonicFrameClock 的外部协程调用 animateScrollToIndex 抛出 IllegalStateException 后，不残留执行状态且后续手势正常吸附更新
+          var missingClockThrown = false
+          try {
+            state.animateScrollToIndex(25)
+          } catch (_: IllegalStateException) {
+            missingClockThrown = true
+          }
+          assertTrue(missingClockThrown)
+          assertEquals(12, state.snappedIndex)
+
+          controller.beginGestureScroll(index = 28, offset = 30)
+          harness.stepFrame()
+          controller.endGestureScroll()
+          harness.stepFrame()
+          harness.stepFrame()
+          assertEquals(29, state.currentIndex)
+          assertEquals(29, state.snappedIndex)
+        } finally {
+          harness.dispose()
+        }
       }
     }
   }
@@ -1666,6 +1726,31 @@ class WheelPickerTest {
         assertEquals(3, state.currentIndex)
         assertEquals(3, state.snappedIndex)
         assertEquals("Restored-3", stateList[state.snappedIndex])
+
+        // 清空列表后若在重组前因滚动触发同步重测空列表，不误发假索引 0 且回填后仍恢复至清空前位置 4
+        state.scrollToIndex(4)
+        harness.stepFrame()
+        assertEquals(4, state.snappedIndex)
+
+        stateList.clear()
+        controller.beginGestureScroll(index = 4, offset = 6)
+        controller.applyMeasure(count = 0)
+        controller.endGestureScroll()
+        Snapshot.sendApplyNotifications()
+        repeat(4) {
+          yield()
+        }
+        assertEquals(4, state.snappedIndex)
+
+        harness.stepFrame()
+        assertEquals(-1, state.currentIndex)
+        assertEquals(-1, state.snappedIndex)
+
+        repeat(10) { stateList.add("RestoredAfterSyncMeasure-$it") }
+        harness.stepFrame()
+        assertEquals(4, state.currentIndex)
+        assertEquals(4, state.snappedIndex)
+        assertEquals("RestoredAfterSyncMeasure-4", stateList[state.snappedIndex])
       } finally {
         harness.dispose()
       }
@@ -1989,10 +2074,15 @@ private class WheelCompositionHarness(
   }
 
   suspend fun advanceUntilIdle(job: Job) {
+    val maxFrames = 20
     var steps = 0
-    while (job.isActive && steps < 20) {
+    while (job.isActive && steps < maxFrames) {
       stepFrame()
       steps++
+    }
+    if (job.isActive) {
+      job.cancelAndJoin()
+      fail("Expected scroll job to complete within $maxFrames frames")
     }
     job.join()
     stepFrame()

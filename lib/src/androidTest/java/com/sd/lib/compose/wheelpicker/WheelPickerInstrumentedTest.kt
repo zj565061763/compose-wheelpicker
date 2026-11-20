@@ -55,6 +55,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -302,9 +303,16 @@ class WheelPickerInstrumentedTest {
     val state = WheelPickerState(initialIndex = 0)
     var items by mutableStateOf((0..99).toList())
     lateinit var composeScope: CoroutineScope
+    var itemHeightPx = 0f
+    var touchSlopPx = 0f
 
     composeRule.setContent {
       composeScope = rememberCoroutineScope()
+      val density = LocalDensity.current
+      val viewConfig = LocalViewConfiguration.current
+      itemHeightPx = with(density) { 44.dp.toPx() }
+      touchSlopPx = viewConfig.touchSlop
+
       VerticalWheelPicker(
         modifier = Modifier.testTag("interruptWheel"),
         count = { items.size },
@@ -319,8 +327,9 @@ class WheelPickerInstrumentedTest {
 
     composeRule.waitForIdle()
     composeRule.mainClock.autoAdvance = false
+    lateinit var animateJob: Job
     composeRule.runOnUiThread {
-      composeScope.launch {
+      animateJob = composeScope.launch {
         state.animateScrollToIndex(80)
       }
     }
@@ -331,18 +340,22 @@ class WheelPickerInstrumentedTest {
       steps++
     }
     assertTrue(state.currentIndex >= 8)
+    assertTrue(state.currentIndex < 80)
+    assertTrue(animateJob.isActive)
 
-    // 用户手指按下并小幅拖动打断正在飞行的编程式动画
+    // 用户手指按下并超过触摸阈值拖动打断正在飞行的编程式动画
     composeRule.onNodeWithTag("interruptWheel").performTouchInput {
       down(center)
-      moveBy(Offset(0f, -24f))
+      moveBy(Offset(0f, -(touchSlopPx + itemHeightPx * 0.25f)))
+      advanceEventTime(120L)
       up()
     }
     composeRule.mainClock.autoAdvance = true
     composeRule.waitForIdle()
 
+    assertTrue(animateJob.isCancelled)
     val stoppedKey = items[state.snappedIndex]
-    assertTrue("Expected stopped key > 0, actual=$stoppedKey", stoppedKey > 0)
+    assertTrue("Expected interrupted stopped key in 8..79, actual=$stoppedKey", stoppedKey in 8..79)
 
     // 后续头插 10 项，LazyList 原生 key 保持停稳条目且 snappedIndex 同步更新
     composeRule.runOnUiThread {
@@ -1230,8 +1243,10 @@ class WheelPickerInstrumentedTest {
     )
     val verticalState = WheelPickerState(initialIndex = 3)
     val observedSnaps = mutableListOf<Int>()
+    lateinit var composeScope: CoroutineScope
 
     composeRule.setContent {
+      composeScope = rememberCoroutineScope()
       verticalState.SnappedIndex { observedSnaps.add(it) }
 
       Column {
@@ -1291,5 +1306,34 @@ class WheelPickerInstrumentedTest {
     assertEquals(0f, verticalState.scrollPercentageOf(3))
     composeRule.onNodeWithText("Restored-3").assertIsDisplayed()
     composeRule.onNodeWithText("Restored-3").assertIsSelected()
+
+    // 3. 停在索引 4 时清空列表并在重组前触发滚动同步重测空列表，不误发假索引 0 且回填后恢复至 4
+    composeRule.runOnUiThread {
+      composeScope.launch {
+        verticalState.scrollToIndex(4)
+      }
+    }
+    composeRule.waitForIdle()
+    assertEquals(4, verticalState.snappedIndex)
+    observedSnaps.clear()
+
+    composeRule.runOnUiThread {
+      backingList.clear()
+      verticalState.lazyListState.dispatchRawDelta(10f)
+    }
+    composeRule.waitForIdle()
+    assertEquals(-1, verticalState.currentIndex)
+    assertEquals(-1, verticalState.snappedIndex)
+    assertTrue(observedSnaps.isEmpty())
+
+    composeRule.runOnUiThread {
+      repeat(8) { backingList.add("AfterSyncClear-$it") }
+    }
+    composeRule.waitForIdle()
+    assertEquals(4, verticalState.currentIndex)
+    assertEquals(4, verticalState.snappedIndex)
+    assertEquals(listOf(4), observedSnaps)
+    composeRule.onNodeWithText("AfterSyncClear-4").assertIsDisplayed()
+    composeRule.onNodeWithText("AfterSyncClear-4").assertIsSelected()
   }
 }

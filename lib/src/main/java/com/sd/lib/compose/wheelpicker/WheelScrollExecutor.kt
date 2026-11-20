@@ -27,8 +27,9 @@ internal class WheelScrollExecutor(
   /** 取消当前进行中的编程式滚动或自动吸附任务 */
   fun cancelActiveScroll() {
     _activeRequestId = 0L
-    _activeScrollJob?.cancel()
+    val activeJob = _activeScrollJob
     _activeScrollJob = null
+    activeJob?.cancel()
   }
 
   /** 执行跳转到[index]，未挂载、空数据或首次摆放前直接记录目标而不挂起，运行中支持并发抢占 */
@@ -38,11 +39,17 @@ internal class WheelScrollExecutor(
   ) {
     store.clearAwaitingFlingHandoff()
     store.syncLiveCount()
+    val requestId = ++_scrollRequestId
+    cancelActiveScroll()
+    if (_scrollRequestId != requestId) {
+      currentCoroutineContext().ensureActive()
+      throwIfInterruptedWhileActive()
+      return
+    }
+
     val currentAttachment = store.attachment
     if (currentAttachment == null || currentAttachment.count <= 0) {
       val requestedIndex = index.coerceAtLeast(0)
-      _scrollRequestId += 1L
-      cancelActiveScroll()
       store.pendingTargetIndex = requestedIndex
       store.lastKnownIndex = requestedIndex
       scrollController.requestScrollToItem(index = requestedIndex, scrollOffset = 0)
@@ -50,8 +57,6 @@ internal class WheelScrollExecutor(
     }
 
     val targetIndex = index.coerceIn(0, currentAttachment.count - 1)
-    val requestId = ++_scrollRequestId
-    cancelActiveScroll()
     store.lastKnownIndex = targetIndex
 
     if (!scrollController.isPositioned || scrollController.totalItemsCount <= 0) {
@@ -66,6 +71,7 @@ internal class WheelScrollExecutor(
     var succeeded = false
     try {
       runScrollStep(
+        requestId = requestId,
         targetIndex = targetIndex,
         animate = animate,
       )
@@ -114,6 +120,7 @@ internal class WheelScrollExecutor(
     var completed = false
     return try {
       runScrollStep(
+        requestId = requestId,
         targetIndex = targetIndex,
         animate = animate,
       )
@@ -136,6 +143,7 @@ internal class WheelScrollExecutor(
 
   /** 启动可取消的底层滚动步骤，组件仍有效但步骤被抢占中断时抛出[CancellationException] */
   private suspend fun runScrollStep(
+    requestId: Long,
     targetIndex: Int,
     animate: Boolean,
   ) {
@@ -149,7 +157,13 @@ internal class WheelScrollExecutor(
         }
         completedNormally = true
       }
-      _activeScrollJob = stepJob
+      if (_activeRequestId == requestId) {
+        if (stepJob.isActive) {
+          _activeScrollJob = stepJob
+        }
+      } else {
+        stepJob.cancel()
+      }
       try {
         stepJob.join()
       } finally {
@@ -161,10 +175,14 @@ internal class WheelScrollExecutor(
 
     currentCoroutineContext().ensureActive()
     if (!completedNormally) {
-      val latestAttachment = store.attachment
-      if (latestAttachment == null || latestAttachment.count <= 0) {
-        return
-      }
+      throwIfInterruptedWhileActive()
+    }
+  }
+
+  /** 组件仍挂载且非空时为被抢占中断的跳转抛出[CancellationException] */
+  private fun throwIfInterruptedWhileActive() {
+    val latestAttachment = store.attachment
+    if (latestAttachment != null && latestAttachment.count > 0) {
       throw CancellationException("Wheel programmatic scroll interrupted")
     }
   }
