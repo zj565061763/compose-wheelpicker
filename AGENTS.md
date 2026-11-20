@@ -87,6 +87,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不对异常挂起或乱序恢复的父级嵌套滚动做跨协程拦截：嵌套滚动行为与官方 `LazyColumn` / `Pager` 对齐，仅针对 `ModalBottomSheet` 等遵守常规协作契约的父容器在 `onPreFling` 期间延迟自动吸附，不通过 `NestedScrollDispatcher` 追踪或取消外层作用域的离手协程 `Job`，不处理自定义父容器在 `onPreFling` / `onPostFling` 中超长挂死、乱序恢复或挂起期间并发编程式跳转等极端构造场景。
 - 不向内层自定义可点击节点下发选中语义：条目外层 `Box` 通过 `semantics(mergeDescendants = true)` 为常规非交互内容合并暴露 `Selected` 状态，调用方若在 `content` 内自行使用 `Modifier.clickable` 等自带语义合并的交互节点，需按 Compose 规则自行使用 `Modifier.selectable` 声明选中态，库层不新增点击回调或作用域 API。
 - 不支持条目内嵌可滚动子容器的独立嵌套滚动隔离：滚轮条目面向常规展示内容设计，不考虑在 `content` 内嵌 `LazyRow`、`LazyColumn` 等子级滚动容器的场景。
+- 保持 `compose-foundation` 为 `implementation` 依赖：常规接入项目均会引入 `material3`、`material` 或 `foundation`，`:lib` 保持 `implementation(composeBom)` 与 `implementation(libs.androidx.compose.foundation)` 以避免向消费方传递版本约束，不改为 `api` 声明。
 
 ## 测试与仓库规范
 
