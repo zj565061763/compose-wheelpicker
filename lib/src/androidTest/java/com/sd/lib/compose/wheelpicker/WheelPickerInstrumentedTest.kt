@@ -27,6 +27,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -53,6 +55,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlin.math.abs
 import kotlinx.coroutines.CompletableDeferred
@@ -1405,8 +1408,10 @@ class WheelPickerInstrumentedTest {
     assertEquals(0f, horizontalState.scrollPercentageOf(9))
     assertEquals(listOf(9), observedHorizontalSnaps)
 
-    val initialVerticalBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().boundsInRoot
+    val initialVerticalBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val initialHorizontalBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
     assertTrue(abs(initialVerticalBounds.height - expectedCollapsedPx) <= 1.5f)
+    assertTrue(abs(initialHorizontalBounds.width - expectedCollapsedPx) <= 1.5f)
 
     // 1. 不触摸滚轮且不修改数据，从 48.dp 展开动画至 240.dp：逐帧与静止后末项 9 均保持选中且居中
     try {
@@ -1414,17 +1419,47 @@ class WheelPickerInstrumentedTest {
       composeRule.runOnUiThread {
         expanded = true
       }
-      var sawIntermediateHeight = false
-      repeat(8) {
+      var sawIntermediateVerticalHeight = false
+      var sawIntermediateHorizontalWidth = false
+      var reachedExpandedTarget = false
+      for (frame in 0 until 120) {
         composeRule.mainClock.advanceTimeBy(16L)
+        assertEquals(9, verticalState.currentIndex)
         assertEquals(9, verticalState.snappedIndex)
+        assertEquals(9, horizontalState.currentIndex)
         assertEquals(9, horizontalState.snappedIndex)
-        val currentHeight = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().boundsInRoot.height
-        if (currentHeight > expectedCollapsedPx + 2f && currentHeight < expectedExpandedPx - 2f) {
-          sawIntermediateHeight = true
+
+        val verticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+        val verticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+        assertTrue(
+          "Expected V-Expand-9 centered during expand (frame=$frame), itemCenterY=${verticalItemBounds.center.y}, wheelCenterY=${verticalWheelBounds.center.y}, wheelHeight=${verticalWheelBounds.height}",
+          abs(verticalItemBounds.center.y - verticalWheelBounds.center.y) <= 1.5f,
+        )
+        if (verticalWheelBounds.height > expectedCollapsedPx + 2f && verticalWheelBounds.height < expectedExpandedPx - 2f) {
+          sawIntermediateVerticalHeight = true
+        }
+
+        val horizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+        val horizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+        assertTrue(
+          "Expected H-Expand-9 centered during expand (frame=$frame), itemCenterX=${horizontalItemBounds.center.x}, wheelCenterX=${horizontalWheelBounds.center.x}, wheelWidth=${horizontalWheelBounds.width}",
+          abs(horizontalItemBounds.center.x - horizontalWheelBounds.center.x) <= 1.5f,
+        )
+        if (horizontalWheelBounds.width > expectedCollapsedPx + 2f && horizontalWheelBounds.width < expectedExpandedPx - 2f) {
+          sawIntermediateHorizontalWidth = true
+        }
+
+        if (
+          abs(verticalWheelBounds.height - expectedExpandedPx) <= 0.5f &&
+          abs(horizontalWheelBounds.width - expectedExpandedPx) <= 0.5f
+        ) {
+          reachedExpandedTarget = true
+          break
         }
       }
-      assertTrue("Expected animateBounds intermediate frame height", sawIntermediateHeight)
+      assertTrue("Expected vertical animateBounds intermediate frame height", sawIntermediateVerticalHeight)
+      assertTrue("Expected horizontal animateBounds intermediate frame width", sawIntermediateHorizontalWidth)
+      assertTrue("Expected both wheels to reach expanded target size within frame limit", reachedExpandedTarget)
     } finally {
       composeRule.mainClock.autoAdvance = true
     }
@@ -1437,8 +1472,8 @@ class WheelPickerInstrumentedTest {
     composeRule.onNodeWithText("V-Expand-9").assertIsDisplayed()
     composeRule.onNodeWithText("V-Expand-9").assertIsSelected()
 
-    val expandedVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().boundsInRoot
-    val expandedVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().boundsInRoot
+    val expandedVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val expandedVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
     assertTrue(abs(expandedVerticalWheelBounds.height - expectedExpandedPx) <= 1.5f)
     assertTrue(
       "Expected V-Expand-9 centered in vertical wheel, itemCenterY=${expandedVerticalItemBounds.center.y}, wheelCenterY=${expandedVerticalWheelBounds.center.y}",
@@ -1452,8 +1487,8 @@ class WheelPickerInstrumentedTest {
     composeRule.onNodeWithText("H-Expand-9").assertIsDisplayed()
     composeRule.onNodeWithText("H-Expand-9").assertIsSelected()
 
-    val expandedHorizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().boundsInRoot
-    val expandedHorizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().boundsInRoot
+    val expandedHorizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val expandedHorizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
     assertTrue(abs(expandedHorizontalWheelBounds.width - expectedExpandedPx) <= 1.5f)
     assertTrue(
       "Expected H-Expand-9 centered in horizontal wheel, itemCenterX=${expandedHorizontalItemBounds.center.x}, wheelCenterX=${expandedHorizontalWheelBounds.center.x}",
@@ -1481,10 +1516,16 @@ class WheelPickerInstrumentedTest {
         expanded = false
       }
       var jumpedDuringShrink = false
-      repeat(12) {
+      var reachedCollapsedTarget = false
+      for (frame in 0 until 120) {
         composeRule.mainClock.advanceTimeBy(16L)
-        val currentHeight = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().boundsInRoot.height
-        if (!jumpedDuringShrink && currentHeight > expectedCollapsedPx + 2f && currentHeight < expectedExpandedPx - 2f) {
+        val verticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+        val horizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+        val isVerticalIntermediate =
+          verticalWheelBounds.height > expectedCollapsedPx + 2f && verticalWheelBounds.height < expectedExpandedPx - 2f
+        val isHorizontalIntermediate =
+          horizontalWheelBounds.width > expectedCollapsedPx + 2f && horizontalWheelBounds.width < expectedExpandedPx - 2f
+        if (!jumpedDuringShrink && isVerticalIntermediate && isHorizontalIntermediate) {
           jumpedDuringShrink = true
           composeRule.runOnUiThread {
             composeScope.launch {
@@ -1492,6 +1533,7 @@ class WheelPickerInstrumentedTest {
               verticalCurrentRightAfterShrinkJump = verticalState.currentIndex
               verticalSnappedRightAfterShrinkJump = verticalState.snappedIndex
             }
+
             composeScope.launch {
               horizontalState.scrollToIndex(9)
               horizontalCurrentRightAfterShrinkJump = horizontalState.currentIndex
@@ -1499,9 +1541,57 @@ class WheelPickerInstrumentedTest {
             }
           }
           composeRule.mainClock.advanceTimeByFrame()
+
+          val postJumpVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+          val postJumpVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+          assertTrue(
+            "Expected vertical shrink still in intermediate frame right after jump, height=${postJumpVerticalWheelBounds.height}",
+            postJumpVerticalWheelBounds.height > expectedCollapsedPx + 2f && postJumpVerticalWheelBounds.height < expectedExpandedPx - 2f,
+          )
+          assertTrue(
+            "Expected V-Expand-9 centered during shrink right after jump, itemCenterY=${postJumpVerticalItemBounds.center.y}, wheelCenterY=${postJumpVerticalWheelBounds.center.y}, wheelHeight=${postJumpVerticalWheelBounds.height}",
+            abs(postJumpVerticalItemBounds.center.y - postJumpVerticalWheelBounds.center.y) <= 1.5f,
+          )
+
+          val postJumpHorizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+          val postJumpHorizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+          assertTrue(
+            "Expected horizontal shrink still in intermediate frame right after jump, width=${postJumpHorizontalWheelBounds.width}",
+            postJumpHorizontalWheelBounds.width > expectedCollapsedPx + 2f && postJumpHorizontalWheelBounds.width < expectedExpandedPx - 2f,
+          )
+          assertTrue(
+            "Expected H-Expand-9 centered during shrink right after jump, itemCenterX=${postJumpHorizontalItemBounds.center.x}, wheelCenterX=${postJumpHorizontalWheelBounds.center.x}, wheelWidth=${postJumpHorizontalWheelBounds.width}",
+            abs(postJumpHorizontalItemBounds.center.x - postJumpHorizontalWheelBounds.center.x) <= 1.5f,
+          )
+        } else if (jumpedDuringShrink) {
+          assertEquals(9, verticalState.currentIndex)
+          assertEquals(9, verticalState.snappedIndex)
+          assertEquals(9, horizontalState.currentIndex)
+          assertEquals(9, horizontalState.snappedIndex)
+
+          val verticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+          assertTrue(
+            "Expected V-Expand-9 centered during remaining shrink frames (frame=$frame), itemCenterY=${verticalItemBounds.center.y}, wheelCenterY=${verticalWheelBounds.center.y}, wheelHeight=${verticalWheelBounds.height}",
+            abs(verticalItemBounds.center.y - verticalWheelBounds.center.y) <= 1.5f,
+          )
+
+          val horizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+          assertTrue(
+            "Expected H-Expand-9 centered during remaining shrink frames (frame=$frame), itemCenterX=${horizontalItemBounds.center.x}, wheelCenterX=${horizontalWheelBounds.center.x}, wheelWidth=${horizontalWheelBounds.width}",
+            abs(horizontalItemBounds.center.x - horizontalWheelBounds.center.x) <= 1.5f,
+          )
+
+          if (
+            abs(verticalWheelBounds.height - expectedCollapsedPx) <= 0.5f &&
+            abs(horizontalWheelBounds.width - expectedCollapsedPx) <= 0.5f
+          ) {
+            reachedCollapsedTarget = true
+            break
+          }
         }
       }
       assertTrue("Expected scrollToIndex(9) during shrink animation", jumpedDuringShrink)
+      assertTrue("Expected both wheels to reach collapsed target size within frame limit", reachedCollapsedTarget)
       assertEquals(9, verticalCurrentRightAfterShrinkJump)
       assertEquals(9, verticalSnappedRightAfterShrinkJump)
       assertEquals(9, horizontalCurrentRightAfterShrinkJump)
@@ -1516,8 +1606,8 @@ class WheelPickerInstrumentedTest {
     assertEquals(0f, verticalState.scrollPercentageOf(9))
     composeRule.onNodeWithText("V-Expand-9").assertIsDisplayed()
     composeRule.onNodeWithText("V-Expand-9").assertIsSelected()
-    val collapsedVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().boundsInRoot
-    val collapsedVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().boundsInRoot
+    val collapsedVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val collapsedVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
     assertTrue(abs(collapsedVerticalWheelBounds.height - expectedCollapsedPx) <= 1.5f)
     assertTrue(abs(collapsedVerticalItemBounds.center.y - collapsedVerticalWheelBounds.center.y) <= 1.5f)
 
@@ -1526,8 +1616,8 @@ class WheelPickerInstrumentedTest {
     assertEquals(0f, horizontalState.scrollPercentageOf(9))
     composeRule.onNodeWithText("H-Expand-9").assertIsDisplayed()
     composeRule.onNodeWithText("H-Expand-9").assertIsSelected()
-    val collapsedHorizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().boundsInRoot
-    val collapsedHorizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().boundsInRoot
+    val collapsedHorizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val collapsedHorizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
     assertTrue(abs(collapsedHorizontalWheelBounds.width - expectedCollapsedPx) <= 1.5f)
     assertTrue(abs(collapsedHorizontalItemBounds.center.x - collapsedHorizontalWheelBounds.center.x) <= 1.5f)
 
@@ -1538,8 +1628,18 @@ class WheelPickerInstrumentedTest {
     composeRule.waitForIdle()
     assertEquals(9, verticalState.snappedIndex)
     assertEquals(9, horizontalState.snappedIndex)
-    val reExpandedVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().boundsInRoot
-    val reExpandedVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().boundsInRoot
+    val reExpandedVerticalWheelBounds = composeRule.onNodeWithTag("expandVerticalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val reExpandedVerticalItemBounds = composeRule.onNodeWithText("V-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
     assertTrue(abs(reExpandedVerticalItemBounds.center.y - reExpandedVerticalWheelBounds.center.y) <= 1.5f)
+    val reExpandedHorizontalWheelBounds = composeRule.onNodeWithTag("expandHorizontalWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val reExpandedHorizontalItemBounds = composeRule.onNodeWithText("H-Expand-9").fetchSemanticsNode().unclippedBoundsInRoot()
+    assertTrue(abs(reExpandedHorizontalItemBounds.center.x - reExpandedHorizontalWheelBounds.center.x) <= 1.5f)
   }
+}
+
+private fun SemanticsNode.unclippedBoundsInRoot(): Rect {
+  return Rect(
+    offset = positionInRoot,
+    size = size.toSize(),
+  )
 }
