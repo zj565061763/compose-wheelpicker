@@ -34,10 +34,8 @@ import androidx.compose.ui.unit.dp
  *
  * 外层按固有尺寸测量宽度时，需通过[modifier]或[focus]指定宽度。
  *
- * 同帧更新列表并立即跳转时，[count]、[key]与[content]需在各自 lambda 内读取同一列表状态，不要混用实时状态与重组期捕获的列表。
- *
  * @param modifier 修饰符
- * @param count 条目总数，要求返回值 >= 0；绑定动态列表时建议在 lambda 内直接读取长度
+ * @param count 条目总数，要求返回值 >= 0
  * @param state 滚轮状态
  * @param key 条目唯一标识，行为与[LazyColumn]一致，用于在常规数据增删或移动时保持当前选中项
  * @param itemHeight 单个条目高度，要求为大于 0.dp 的有限值
@@ -83,10 +81,8 @@ fun VerticalWheelPicker(
  *
  * 外层按固有尺寸测量高度时，需通过[modifier]或[focus]指定高度。
  *
- * 同帧更新列表并立即跳转时，[count]、[key]与[content]需在各自 lambda 内读取同一列表状态，不要混用实时状态与重组期捕获的列表。
- *
  * @param modifier 修饰符
- * @param count 条目总数，要求返回值 >= 0；绑定动态列表时建议在 lambda 内直接读取长度
+ * @param count 条目总数，要求返回值 >= 0
  * @param state 滚轮状态
  * @param key 条目唯一标识，行为与[LazyRow]一致，用于在常规数据增删或移动时保持当前选中项
  * @param itemWidth 单个条目宽度，要求为大于 0.dp 的有限值
@@ -156,7 +152,6 @@ private fun WheelPicker(
     }
   }
   val resolvedCount = resolvedCountState.value
-  state.attachLiveCountSync()
   val countProvider: () -> Int = remember(resolvedCountState) {
     { resolvedCountState.value }
   }

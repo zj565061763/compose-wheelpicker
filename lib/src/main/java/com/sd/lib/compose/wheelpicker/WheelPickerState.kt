@@ -100,11 +100,6 @@ class WheelPickerState internal constructor(
     return _store.scrollPercentageOf(index)
   }
 
-  /** 订阅帧间实时条目数同步失效通知 */
-  internal fun attachLiveCountSync() {
-    _store.attachLiveCountSync()
-  }
-
   internal fun updateViewportUnfocusedCount(
     owner: Any,
     unfocusedCount: Int,
@@ -136,9 +131,6 @@ class WheelPickerState internal constructor(
     countProvider: (() -> Int)? = null,
   ) {
     val previousOwner = _store.attachment?.owner
-    if (count > 0 && previousOwner != null && previousOwner !== owner) {
-      _scrollExecutor.cancelActiveScroll()
-    }
     _store.updateAttachment(
       owner = owner,
       count = count,
@@ -148,7 +140,7 @@ class WheelPickerState internal constructor(
       flingGuardEnabled = flingGuardEnabled,
       countProvider = countProvider,
     )
-    if (count <= 0) {
+    if (count <= 0 || (previousOwner != null && previousOwner !== owner)) {
       _scrollExecutor.cancelActiveScroll()
     }
   }

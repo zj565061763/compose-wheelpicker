@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
  * 垂直滚轮默认焦点指示器，在焦点区域上下边缘绘制分割线
  *
  * @param modifier 修饰符
- * @param thickness 分割线厚度，传入[Dp.Hairline]（或 0.dp）时绘制 1px 细线；需隐藏指示器可传 focus = {} 或将[color]设为[Color.Transparent]
+ * @param thickness 分割线厚度，传入[Dp.Hairline]时绘制 1px 细线
  * @param color 分割线颜色
  */
 @Composable
@@ -37,7 +37,7 @@ fun WheelPickerFocusVertical(
  * 水平滚轮默认焦点指示器，在焦点区域左右边缘绘制分割线
  *
  * @param modifier 修饰符
- * @param thickness 分割线厚度，传入[Dp.Hairline]（或 0.dp）时绘制 1px 细线；需隐藏指示器可传 focus = {} 或将[color]设为[Color.Transparent]
+ * @param thickness 分割线厚度，传入[Dp.Hairline]时绘制 1px 细线
  * @param color 分割线颜色
  */
 @Composable
@@ -66,15 +66,12 @@ private fun WheelPickerFocusIndicator(
     modifier = modifier
       .fillMaxSize()
       .drawBehind {
-        if (!thickness.value.isFinite() || thickness < 0.dp || color.alpha <= 0f) {
-          return@drawBehind
-        }
         val strokePx = if (thickness == Dp.Hairline) {
           1f
         } else {
           thickness.toPx()
         }
-        if (strokePx <= 0f) {
+        if (!strokePx.isFinite() || strokePx <= 0f || color.alpha <= 0f) {
           return@drawBehind
         }
         when (orientation) {

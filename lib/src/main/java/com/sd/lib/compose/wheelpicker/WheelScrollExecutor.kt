@@ -27,9 +27,8 @@ internal class WheelScrollExecutor(
   /** 取消当前进行中的编程式滚动或自动吸附任务 */
   fun cancelActiveScroll() {
     _activeRequestId = 0L
-    val activeJob = _activeScrollJob
+    _activeScrollJob?.cancel()
     _activeScrollJob = null
-    activeJob?.cancel()
   }
 
   /** 执行跳转到[index]，未挂载、空数据或首次摆放前直接记录目标而不挂起，运行中支持并发抢占 */
@@ -41,11 +40,6 @@ internal class WheelScrollExecutor(
     store.syncLiveCount()
     val requestId = ++_scrollRequestId
     cancelActiveScroll()
-    if (_scrollRequestId != requestId) {
-      currentCoroutineContext().ensureActive()
-      throwIfInterruptedWhileActive()
-      return
-    }
 
     val currentAttachment = store.attachment
     if (currentAttachment == null || currentAttachment.count <= 0) {
@@ -71,7 +65,6 @@ internal class WheelScrollExecutor(
     var succeeded = false
     try {
       runScrollStep(
-        requestId = requestId,
         targetIndex = targetIndex,
         animate = animate,
       )
@@ -120,7 +113,6 @@ internal class WheelScrollExecutor(
     var completed = false
     return try {
       runScrollStep(
-        requestId = requestId,
         targetIndex = targetIndex,
         animate = animate,
       )
@@ -143,7 +135,6 @@ internal class WheelScrollExecutor(
 
   /** 启动可取消的底层滚动步骤，组件仍有效但步骤被抢占中断时抛出[CancellationException] */
   private suspend fun runScrollStep(
-    requestId: Long,
     targetIndex: Int,
     animate: Boolean,
   ) {
@@ -157,12 +148,8 @@ internal class WheelScrollExecutor(
         }
         completedNormally = true
       }
-      if (_activeRequestId == requestId) {
-        if (stepJob.isActive) {
-          _activeScrollJob = stepJob
-        }
-      } else {
-        stepJob.cancel()
+      if (stepJob.isActive) {
+        _activeScrollJob = stepJob
       }
       try {
         stepJob.join()
@@ -175,15 +162,10 @@ internal class WheelScrollExecutor(
 
     currentCoroutineContext().ensureActive()
     if (!completedNormally) {
-      throwIfInterruptedWhileActive()
-    }
-  }
-
-  /** 组件仍挂载且非空时为被抢占中断的跳转抛出[CancellationException] */
-  private fun throwIfInterruptedWhileActive() {
-    val latestAttachment = store.attachment
-    if (latestAttachment != null && latestAttachment.count > 0) {
-      throw CancellationException("Wheel programmatic scroll interrupted")
+      val latestAttachment = store.attachment
+      if (latestAttachment != null && latestAttachment.count > 0) {
+        throw CancellationException("Wheel programmatic scroll interrupted")
+      }
     }
   }
 }

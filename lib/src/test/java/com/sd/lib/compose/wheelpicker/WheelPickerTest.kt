@@ -46,7 +46,6 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
@@ -524,49 +523,6 @@ class WheelPickerTest {
       assertEquals(9, controller.firstVisibleItemIndex)
       assertEquals(9, state.currentIndex)
       assertEquals(9, state.snappedIndex)
-
-      // 场景 D：立即派发调度器下动画期间 count -> 0 时静默结束不误抛取消异常，并保留待跳转目标
-      val unconfinedEmptyJob = launch(Dispatchers.Unconfined) {
-        state.animateScrollToIndex(5)
-      }
-      state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
-      assertTrue(unconfinedEmptyJob.isCompleted)
-      assertFalse(unconfinedEmptyJob.isCancelled)
-      controller.applyMeasure(count = 0)
-
-      state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 10)
-      assertEquals(5, controller.firstVisibleItemIndex)
-      assertEquals(5, state.currentIndex)
-      assertEquals(5, state.snappedIndex)
-
-      // 场景 E：立即派发调度器下动画期间切换非空 owner 时先取消旧滚动且不以旧 owner 重入覆盖新挂载状态
-      val ownerC = Any()
-      var liveCount = 10
-      state.updateAttachment(
-        owner = ownerB,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-        countProvider = { liveCount },
-      )
-      val unconfinedSwitchJob = launch(Dispatchers.Unconfined) {
-        state.animateScrollToIndex(3)
-      }
-      liveCount = 4
-      state.updateAttachment(
-        owner = ownerC,
-        count = 4,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-        countProvider = { liveCount },
-      )
-      assertTrue(unconfinedSwitchJob.isCancelled)
-      state.detach(ownerB)
-      controller.applyMeasure(count = 4)
-      assertEquals(3, controller.firstVisibleItemIndex)
-      assertEquals(3, state.currentIndex)
-      assertEquals(3, state.snappedIndex)
     }
   }
 
@@ -687,113 +643,7 @@ class WheelPickerTest {
           assertEquals(4, state.currentIndex)
           assertEquals(4, state.snappedIndex)
 
-          // 2. 取消旧动画时调用方在取消处理中同步发起新跳转，后发起的目标 10 生效且被抢占的跳转 4 抛出 CancellationException
-          val unconfinedJob = Job(coroutineContext[Job])
-          val unconfinedScope = CoroutineScope(coroutineContext + unconfinedJob + Dispatchers.Unconfined + harness.clock)
-          try {
-            var reentrantScrollJob: Job? = null
-            val cancelledAnimJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-              try {
-                state.animateScrollToIndex(15)
-              } catch (cancelled: CancellationException) {
-                reentrantScrollJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                  state.scrollToIndex(10)
-                }
-                throw cancelled
-              }
-            }
-            assertTrue(state.isScrollInProgress)
-
-            var preemptedScrollCancelled = false
-            try {
-              state.scrollToIndex(4)
-            } catch (_: CancellationException) {
-              preemptedScrollCancelled = true
-            }
-            cancelledAnimJob.join()
-            reentrantScrollJob?.join()
-            assertTrue(preemptedScrollCancelled)
-            assertEquals(10, controller.firstVisibleItemIndex)
-            assertEquals(10, state.currentIndex)
-            assertEquals(10, state.snappedIndex)
-
-            // 取消旧动画时同步重入发起新动画 18，验证执行器仍持有新动画引用并在清空列表时无需手动恢复即可取消结束
-            var reentrantAnimateJob: Job? = null
-            val cancelledForReanimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-              try {
-                state.animateScrollToIndex(15)
-              } catch (cancelled: CancellationException) {
-                reentrantAnimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                  state.animateScrollToIndex(18)
-                }
-                throw cancelled
-              }
-            }
-            assertTrue(state.isScrollInProgress)
-
-            var preemptedForReanimateCancelled = false
-            try {
-              state.scrollToIndex(4)
-            } catch (_: CancellationException) {
-              preemptedForReanimateCancelled = true
-            }
-            cancelledForReanimateJob.join()
-            assertTrue(preemptedForReanimateCancelled)
-            val activeReentrantJob = checkNotNull(reentrantAnimateJob)
-            assertTrue(activeReentrantJob.isActive)
-            assertTrue(state.isScrollInProgress)
-
-            items = emptyList()
-            harness.stepFrame()
-            assertFalse(activeReentrantJob.isActive)
-            activeReentrantJob.join()
-            assertFalse(activeReentrantJob.isCancelled)
-            assertFalse(state.isScrollInProgress)
-            assertEquals(-1, state.snappedIndex)
-
-            items = (0..29).toList()
-            harness.stepFrame()
-            assertEquals(18, state.currentIndex)
-            assertEquals(18, state.snappedIndex)
-
-            // 列表始终非空时，同步重入发起的新动画 21 放行后正常滚至目标并结算 snappedIndex
-            var normalReentrantAnimateJob: Job? = null
-            val cancelledForNormalReanimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-              try {
-                state.animateScrollToIndex(15)
-              } catch (cancelled: CancellationException) {
-                normalReentrantAnimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                  state.animateScrollToIndex(21)
-                }
-                throw cancelled
-              }
-            }
-            assertTrue(state.isScrollInProgress)
-
-            var preemptedForNormalReanimateCancelled = false
-            try {
-              state.scrollToIndex(4)
-            } catch (_: CancellationException) {
-              preemptedForNormalReanimateCancelled = true
-            }
-            cancelledForNormalReanimateJob.join()
-            assertTrue(preemptedForNormalReanimateCancelled)
-            val completedReentrantJob = checkNotNull(normalReentrantAnimateJob)
-            assertTrue(completedReentrantJob.isActive)
-            assertTrue(state.isScrollInProgress)
-
-            controller.resumeActiveAnimation()
-            completedReentrantJob.join()
-            assertFalse(completedReentrantJob.isCancelled)
-            harness.stepFrame()
-            assertEquals(21, controller.firstVisibleItemIndex)
-            assertEquals(21, state.currentIndex)
-            assertEquals(21, state.snappedIndex)
-          } finally {
-            unconfinedJob.cancel()
-          }
-
-          // 3. 含 MonotonicFrameClock 的协程调用 animateScrollToIndex 正常完成
+          // 2. 含 MonotonicFrameClock 的协程调用 animateScrollToIndex 正常完成
           controller.pauseAnimations = false
           controller.emulateRealLazyListAnimateTiming = true
           val secondJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
@@ -803,7 +653,7 @@ class WheelPickerTest {
           assertEquals(12, state.currentIndex)
           assertEquals(12, state.snappedIndex)
 
-          // 4. 无 MonotonicFrameClock 的外部协程调用 animateScrollToIndex 抛出 IllegalStateException 后，不残留执行状态且后续手势正常吸附更新
+          // 3. 无 MonotonicFrameClock 的外部协程调用 animateScrollToIndex 抛出 IllegalStateException 后，不残留执行状态且后续手势正常吸附更新
           var missingClockThrown = false
           try {
             state.animateScrollToIndex(25)
@@ -1733,7 +1583,7 @@ class WheelPickerTest {
   }
 
   @Test
-  fun testSameFrameMutateScrollAndRestoreOriginalCountSyncsState() {
+  fun testPublicStateAndObserverDoNotEagerlyEvaluateCount() {
     runBlocking {
       val controller = FakeWheelScrollController(initialIndex = 2).also {
         it.supportsNativeWindowTracking = true
@@ -1762,31 +1612,7 @@ class WheelPickerTest {
         assertEquals(2, state.snappedIndex)
         assertEquals(2, state.currentIndex)
 
-        // 1. 同帧内 10 -> 0 -> scrollToIndex(7) -> 回填 10 项：重组测量后正常定位到 7，scrollPercentageOf 非空
-        stateList.clear()
-        state.scrollToIndex(7)
-        assertEquals(-1, state.snappedIndex)
-        repeat(10) { stateList.add("Refilled-$it") }
-
-        harness.stepFrame()
-        assertEquals(7, state.currentIndex)
-        assertEquals(7, state.snappedIndex)
-        assertEquals(0f, state.scrollPercentageOf(7))
-        assertEquals("Refilled-7", stateList[state.snappedIndex])
-
-        // 2. 同帧内 10 -> 20 -> scrollToIndex(17) -> 缩回 10 项：currentIndex 与 snappedIndex 均收敛至 9 不越界
-        repeat(10) { stateList.add("Expanded-${it + 10}") }
-        state.scrollToIndex(17)
-        assertEquals(17, state.snappedIndex)
-        stateList.removeRange(10, 20)
-
-        harness.stepFrame()
-        assertEquals(9, state.currentIndex)
-        assertEquals(9, state.snappedIndex)
-        assertEquals(0f, state.scrollPercentageOf(9))
-        assertEquals("Refilled-9", stateList[state.snappedIndex])
-
-        // 3. 条目数不变时连续更新滚动偏移（含滚动中与逐次静止快照发射），调用方的 count() 均不重复执行
+        // 1. 条目数不变时连续更新滚动偏移（含滚动中与逐次静止快照发射），调用方的 count() 均不重复执行
         countInvocationCount = 0
         for (step in 0..9) {
           controller.setPositionInScroll(index = step, offset = 0)
@@ -1805,7 +1631,7 @@ class WheelPickerTest {
         assertEquals(0, countInvocationCount)
         assertEquals(5, state.snappedIndex)
 
-        // 4. 空态下同帧新增数据但尚未重组恢复前，公开状态保持 (-1, -1, null) 不暴露假索引 0，重组后恢复至 3
+        // 2. 空态下同帧新增数据但尚未重组恢复前，公开状态保持 (-1, -1, null) 不暴露假索引 0，重组后恢复至 3
         state.scrollToIndex(3)
         assertEquals(3, state.snappedIndex)
 
@@ -1824,37 +1650,12 @@ class WheelPickerTest {
         assertEquals(3, state.currentIndex)
         assertEquals(3, state.snappedIndex)
         assertEquals("Restored-3", stateList[state.snappedIndex])
-
-        // 清空列表后若在重组前因滚动触发同步重测空列表，不误发假索引 0 且回填后仍恢复至清空前位置 4
-        state.scrollToIndex(4)
-        harness.stepFrame()
-        assertEquals(4, state.snappedIndex)
-
-        stateList.clear()
-        controller.beginGestureScroll(index = 4, offset = 6)
-        controller.applyMeasure(count = 0)
-        controller.endGestureScroll()
-        Snapshot.sendApplyNotifications()
-        repeat(4) {
-          yield()
-        }
-        assertEquals(4, state.snappedIndex)
-
-        harness.stepFrame()
-        assertEquals(-1, state.currentIndex)
-        assertEquals(-1, state.snappedIndex)
-
-        repeat(10) { stateList.add("RestoredAfterSyncMeasure-$it") }
-        harness.stepFrame()
-        assertEquals(4, state.currentIndex)
-        assertEquals(4, state.snappedIndex)
-        assertEquals("RestoredAfterSyncMeasure-4", stateList[state.snappedIndex])
       } finally {
         harness.dispose()
       }
     }
 
-    // 5. 条件渲染卸载前（data = null 尚未进入下一帧重组），观察流与 SnappedIndex 不会抢先求值 count() 导致 NPE
+    // 3. 条件渲染卸载前（data = null 尚未进入下一帧重组），观察流与 SnappedIndex 不会抢先求值 count() 导致 NPE
     runBlocking {
       val controller = FakeWheelScrollController(initialIndex = 1)
       val state = WheelPickerState(initialIndex = 1, scrollController = controller)
@@ -2077,7 +1878,6 @@ private class WheelCompositionHarness(
       }
     }
     val resolvedCount = resolvedCountState.value
-    state.attachLiveCountSync()
     val countProvider: () -> Int = remember(resolvedCountState) {
       { resolvedCountState.value }
     }
