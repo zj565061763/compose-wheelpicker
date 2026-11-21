@@ -264,8 +264,13 @@ private fun WheelPicker(
       )
     }
   }
-  val listModifier = remember(state, owner, flingGuardConnection) {
+  val listModifier = remember(state, owner, viewportState, orientation, itemSizePx, flingGuardConnection) {
     Modifier
+      .bindViewportListPadding(
+        viewportState = viewportState,
+        orientation = orientation,
+        itemSizePx = itemSizePx,
+      )
       .nestedScroll(flingGuardConnection)
       .onGloballyPositioned {
         state.onPositioned(owner)

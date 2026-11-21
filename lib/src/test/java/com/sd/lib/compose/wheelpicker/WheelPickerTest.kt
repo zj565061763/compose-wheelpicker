@@ -1085,12 +1085,14 @@ class WheelPickerTest {
         )
       },
     )
+    val lookaheadScope = FakeMeasureScope(backingDensity = density, isLookingAhead = true)
     val observeScope = FakeMeasureScope(backingDensity = density)
     val observeList = ThrowingIntrinsicMeasurable(measuredWidth = 80, measuredHeight = 48)
     val observeFocus = FakeBoxMeasurable(intrinsicCrossSize = 72)
     val measureObservedReads = mutableListOf<Any>()
     Snapshot.observe(readObserver = { measureObservedReads.add(it) }) {
       with(observePolicy) {
+        lookaheadScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 240))
         observeScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 20))
       }
     }
@@ -1098,6 +1100,51 @@ class WheelPickerTest {
     assertTrue(observeViewportState.shouldClip)
     assertEquals(0.dp, observeViewportState.contentPadding.calculateTopPadding())
     assertEquals(-1f, observeState.scrollPercentageOf(1)!!, 0.0001f)
+
+    // 预测测量阶段不提前覆写实际状态，且列表测量（含 forceRemeasure 将实际约束传入预测重测）始终按本次约束计算内边距
+    var lastReadPaddingInMeasure = (-1).dp
+    val paddingProbeMeasurable = ThrowingIntrinsicMeasurable(
+      measuredWidth = 80,
+      measuredHeight = 240,
+      onMeasure = {
+        lastReadPaddingInMeasure = observeViewportState.contentPadding.calculateTopPadding()
+      },
+    )
+    val probeObservedReads = mutableListOf<Any>()
+    Snapshot.observe(readObserver = { probeObservedReads.add(it) }) {
+      with(observePolicy) {
+        lookaheadScope.measure(listOf(paddingProbeMeasurable, observeFocus), Constraints.fixed(80, 240))
+      }
+    }
+    assertTrue(probeObservedReads.isEmpty())
+    assertEquals(96.dp, lastReadPaddingInMeasure)
+    assertTrue(observeViewportState.shouldClip)
+    assertEquals(0.dp, observeViewportState.contentPadding.calculateTopPadding())
+    assertEquals(-1f, observeState.scrollPercentageOf(1)!!, 0.0001f)
+
+    // 模拟从 240px 收缩至 48px 途中：预测测量已跑过 48px，随后同步重测将实际测量 144px 约束传入预测重测
+    with(observePolicy) {
+      lookaheadScope.measure(listOf(paddingProbeMeasurable, observeFocus), Constraints.fixed(80, 48))
+    }
+    assertEquals(0.dp, lastReadPaddingInMeasure)
+
+    observeViewportState.measureList(
+      measurable = paddingProbeMeasurable,
+      constraints = Constraints.fixed(80, 144),
+      density = lookaheadScope,
+      orientation = WheelOrientation.Vertical,
+      itemSizePx = 48,
+    )
+    assertEquals(48.dp, lastReadPaddingInMeasure)
+
+    observeViewportState.measureList(
+      measurable = paddingProbeMeasurable,
+      constraints = Constraints.fixed(80, 48),
+      density = observeScope,
+      orientation = WheelOrientation.Vertical,
+      itemSizePx = 48,
+    )
+    assertEquals(0.dp, lastReadPaddingInMeasure)
 
     runBlocking {
       val controller = FakeWheelScrollController(initialIndex = 5)
@@ -1174,6 +1221,8 @@ class WheelPickerTest {
     )
     val paddingRef = viewportState.contentPadding
     assertEquals(1, viewportState.onMeasure(WheelOrientation.Vertical, density, maxMainAxisPx = 150, itemSizePx = 40, requestedUnfocusedCount = 2))
+    assertEquals(20.dp, viewportState.contentPadding.calculateTopPadding())
+    assertEquals(2, viewportState.onMeasure(WheelOrientation.Vertical, density, maxMainAxisPx = 240, itemSizePx = 40, requestedUnfocusedCount = 2, isLookingAhead = true))
     assertEquals(20.dp, viewportState.contentPadding.calculateTopPadding())
     assertEquals(0, viewportState.resolveUnfocusedCount(itemSizePx = 60, requestedUnfocusedCount = 2))
     assertSame(paddingRef, viewportState.contentPadding)
@@ -2390,6 +2439,7 @@ private class FakeWheelScrollController(
 private class ThrowingIntrinsicMeasurable(
   private val measuredWidth: Int,
   private val measuredHeight: Int,
+  private val onMeasure: (() -> Unit)? = null,
 ) : Measurable {
   override val parentData: Any?
     get() {
@@ -2397,6 +2447,7 @@ private class ThrowingIntrinsicMeasurable(
     }
 
   override fun measure(constraints: Constraints): Placeable {
+    onMeasure?.invoke()
     return FakePlaceable(
       w = measuredWidth.coerceIn(constraints.minWidth, constraints.maxWidth),
       h = measuredHeight.coerceIn(constraints.minHeight, constraints.maxHeight),
@@ -2477,6 +2528,7 @@ private class FakePlaceable(
 
 private class FakeMeasureScope(
   private val backingDensity: Density,
+  override val isLookingAhead: Boolean = false,
 ) : MeasureScope, IntrinsicMeasureScope {
   override val density: Float
     get() {
