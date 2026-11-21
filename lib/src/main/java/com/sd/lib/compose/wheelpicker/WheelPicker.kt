@@ -20,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.selected
@@ -160,7 +159,7 @@ private fun WheelPicker(
   val density = LocalDensity.current
   val layoutDirection = LocalLayoutDirection.current
   val itemSizePx = remember(density, itemSize) {
-    resolveWheelItemSizePx(density = density, itemSize = itemSize)
+    with(density) { itemSize.roundToPx() }.coerceAtLeast(1)
   }
   val viewportState = remember(orientation) {
     WheelViewportState(
@@ -222,8 +221,11 @@ private fun WheelPicker(
     content = content,
   )
   val flingBehavior = rememberSnapFlingBehavior(lazyListState = state.lazyListState)
-  val itemModifier = remember(orientation, itemSizePx) {
-    Modifier.itemMainAxisSize(orientation = orientation, sizePx = itemSizePx)
+  val itemModifier = remember(orientation, density, itemSizePx) {
+    Modifier.itemMainAxisSize(
+      orientation = orientation,
+      size = with(density) { itemSizePx.toDp() },
+    )
   }
   val lazyListContent: LazyListScope.() -> Unit = remember(
     state,
@@ -259,7 +261,7 @@ private fun WheelPicker(
       )
     }
   }
-  val listModifier = remember(state, owner, viewportState, orientation, itemSizePx, flingGuardConnection) {
+  val listModifier = remember(viewportState, orientation, itemSizePx, flingGuardConnection) {
     Modifier
       .bindViewportListPadding(
         viewportState = viewportState,
@@ -267,9 +269,6 @@ private fun WheelPicker(
         itemSizePx = itemSizePx,
       )
       .nestedScroll(flingGuardConnection)
-      .onGloballyPositioned {
-        state.onPositioned(owner)
-      }
   }
 
   WheelViewportBox(

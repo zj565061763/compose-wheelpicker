@@ -5,7 +5,6 @@ import androidx.compose.animation.animateBounds
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -15,7 +14,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -30,7 +28,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -48,7 +45,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -60,7 +56,6 @@ import kotlin.math.abs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
@@ -82,11 +77,7 @@ class WheelPickerInstrumentedTest {
     var horizontalMeasuredSize = IntSize.Zero
     var expectedMainAxisPx = 0
     var expectedCrossAxisPx = 0
-    var hugeItemMeasuredHeight = 0
-    var hugeFocusMeasuredHeight = 0
     val tightState = WheelPickerState(initialIndex = 2)
-    val hugeVerticalState = WheelPickerState(initialIndex = 0)
-    val hugeHorizontalState = WheelPickerState(initialIndex = 0)
 
     composeRule.setContent {
       val density = LocalDensity.current
@@ -144,54 +135,6 @@ class WheelPickerInstrumentedTest {
           BasicText(text = "T-$index")
         }
       }
-
-      CompositionLocalProvider(LocalDensity provides Density(1f)) {
-        Box(modifier = Modifier.size(width = 120.dp, height = 160.dp)) {
-          VerticalWheelPicker(
-            count = { 3 },
-            state = hugeVerticalState,
-            itemHeight = 400_000.dp,
-            unfocusedCount = 2,
-            focus = {
-              Box(
-                modifier = Modifier
-                  .fillMaxSize()
-                  .onSizeChanged { hugeFocusMeasuredHeight = it.height },
-              )
-            },
-          ) { index ->
-            Box(
-              modifier = Modifier
-                .fillMaxSize()
-                .onSizeChanged {
-                  if (index == 0) {
-                    hugeItemMeasuredHeight = it.height
-                  }
-                },
-            ) {
-              BasicText(text = "HV-$index")
-            }
-          }
-        }
-
-        Box(
-          modifier = Modifier
-            .width(IntrinsicSize.Max)
-            .height(IntrinsicSize.Min),
-        ) {
-          HorizontalWheelPicker(
-            count = { 1 },
-            state = hugeHorizontalState,
-            itemWidth = 400_000.dp,
-            unfocusedCount = 2,
-            focus = {
-              Box(modifier = Modifier.height(48.dp))
-            },
-          ) { index ->
-            BasicText(text = "HH-$index")
-          }
-        }
-      }
     }
 
     composeRule.waitForIdle()
@@ -201,13 +144,6 @@ class WheelPickerInstrumentedTest {
     assertEquals(expectedCrossAxisPx, horizontalMeasuredSize.height)
     assertEquals(2, tightState.snappedIndex)
     assertEquals(0f, tightState.scrollPercentageOf(2))
-    assertEquals(MAX_CONSTRAINT_AXIS_PX, hugeItemMeasuredHeight)
-    assertEquals(MAX_CONSTRAINT_AXIS_PX, hugeFocusMeasuredHeight)
-    assertEquals(0, hugeVerticalState.snappedIndex)
-    assertEquals(0f, hugeVerticalState.scrollPercentageOf(0))
-    assertEquals(1f, hugeVerticalState.scrollPercentageOf(1))
-    assertEquals(0, hugeHorizontalState.snappedIndex)
-    assertEquals(0f, hugeHorizontalState.scrollPercentageOf(0))
   }
 
   @OptIn(ExperimentalMaterial3Api::class)
@@ -405,19 +341,11 @@ class WheelPickerInstrumentedTest {
           .testTag("focusVerticalTransparent"),
         color = Color.Transparent,
       )
-
-      WheelPickerFocusVertical(
-        modifier = Modifier
-          .size(80.dp, 40.dp)
-          .testTag("focusVerticalNegativeThickness"),
-        thickness = (-1).dp,
-      )
     }
 
     composeRule.waitForIdle()
     composeRule.onNodeWithTag("focusHorizontalHairline").assertIsDisplayed()
     composeRule.onNodeWithTag("focusVerticalTransparent").assertIsDisplayed()
-    composeRule.onNodeWithTag("focusVerticalNegativeThickness").assertIsDisplayed()
     composeRule.onNodeWithTag("rtlDisplay-2", useUnmergedTree = true).assertIsDisplayed()
 
     val centerPct = rtlState.scrollPercentageOf(2)!!
@@ -434,8 +362,6 @@ class WheelPickerInstrumentedTest {
     val stateList = mutableStateListOf("A", "B", "C", "D", "E")
     var visible by mutableStateOf(true)
     var itemHeightPx = 0
-    var clocklessExceptionCaught = false
-    val rawMainScope = CoroutineScope(Dispatchers.Main.immediate)
     lateinit var mainScope: CoroutineScope
 
     composeRule.setContent {
@@ -502,35 +428,6 @@ class WheelPickerInstrumentedTest {
     composeRule.waitForIdle()
     assertEquals(2, state.snappedIndex)
     assertEquals("B", stateList[state.snappedIndex])
-
-    // 3. 重挂载摆放完成后在无帧时钟作用域调用动画抛异常不残留状态，后续手势滑动仍正常更新 snappedIndex
-    composeRule.runOnUiThread {
-      visible = false
-    }
-    composeRule.waitForIdle()
-    composeRule.runOnUiThread {
-      visible = true
-    }
-    composeRule.waitForIdle()
-    composeRule.runOnUiThread {
-      rawMainScope.launch {
-        try {
-          state.animateScrollToIndex(0)
-        } catch (_: IllegalStateException) {
-          clocklessExceptionCaught = true
-        }
-      }
-    }
-    composeRule.waitForIdle()
-    assertTrue(clocklessExceptionCaught)
-    assertEquals(2, state.snappedIndex)
-
-    composeRule.onNodeWithTag("shrinkWheel").performTouchInput {
-      swipeUp(startY = bottom - 10f, endY = top + 10f, durationMillis = 80L)
-    }
-    composeRule.waitForIdle()
-    assertTrue(state.currentIndex > 2)
-    assertEquals(state.currentIndex, state.snappedIndex)
   }
 
   @Test
@@ -580,204 +477,6 @@ class WheelPickerInstrumentedTest {
     if (settled + 1 < 30) {
       composeRule.onNodeWithText("Option-${settled + 1}").assertIsNotSelected()
     }
-  }
-
-  @Test
-  fun testMeasuredBeforeFirstPlacementProgrammaticScrollDoesNotHang() {
-    val scrollState = WheelPickerState(initialIndex = 0)
-    val animateState = WheelPickerState(initialIndex = 0)
-    lateinit var composeScope: CoroutineScope
-    var showScrollWheel by mutableStateOf(true)
-    var scrollJumpTarget by mutableStateOf(8)
-    var scrollMeasured by mutableStateOf(false)
-    var allowScrollPlace by mutableStateOf(false)
-    var totalItemsDuringScrollJump = -1
-
-    var animateMeasured by mutableStateOf(false)
-    var allowAnimatePlace by mutableStateOf(false)
-    var totalItemsDuringAnimateJump = -1
-
-    val remountAnimateState = WheelPickerState(initialIndex = 0)
-    var remountStage by mutableStateOf(0)
-    var allowRemountSecondMeasure by mutableStateOf(false)
-
-    composeRule.setContent {
-      composeScope = rememberCoroutineScope()
-
-      if (showScrollWheel) {
-        LaunchedEffect(scrollMeasured, scrollJumpTarget) {
-          if (scrollMeasured && !allowScrollPlace) {
-            totalItemsDuringScrollJump = scrollState.lazyListState.layoutInfo.totalItemsCount
-            scrollState.scrollToIndex(scrollJumpTarget)
-            allowScrollPlace = true
-          }
-        }
-
-        Layout(
-          content = {
-            VerticalWheelPicker(
-              count = { 12 },
-              state = scrollState,
-              itemHeight = 40.dp,
-              unfocusedCount = 2,
-            ) { index ->
-              BasicText(text = "Immediate-$index")
-            }
-          },
-        ) { measurables, constraints ->
-          val placeable = measurables.first().measure(constraints)
-          scrollMeasured = true
-          layout(placeable.width, placeable.height) {
-            if (allowScrollPlace) {
-              placeable.placeRelative(0, 0)
-            }
-          }
-        }
-      }
-
-      LaunchedEffect(animateMeasured) {
-        if (animateMeasured) {
-          totalItemsDuringAnimateJump = animateState.lazyListState.layoutInfo.totalItemsCount
-          animateState.animateScrollToIndex(8)
-          allowAnimatePlace = true
-        }
-      }
-
-      Layout(
-        content = {
-          HorizontalWheelPicker(
-            count = { 12 },
-            state = animateState,
-            itemWidth = 40.dp,
-            unfocusedCount = 2,
-          ) { index ->
-            BasicText(text = "Animated-$index")
-          }
-        },
-      ) { measurables, constraints ->
-        val placeable = measurables.first().measure(constraints)
-        animateMeasured = true
-        layout(placeable.width, placeable.height) {
-          if (allowAnimatePlace) {
-            placeable.placeRelative(0, 0)
-          }
-        }
-      }
-
-      when (remountStage) {
-        0 -> {
-          VerticalWheelPicker(
-            count = { 1 },
-            state = remountAnimateState,
-            itemHeight = 40.dp,
-            unfocusedCount = 2,
-          ) { index ->
-            BasicText(text = "RemountOld-$index")
-          }
-        }
-        2 -> {
-          LaunchedEffect(Unit) {
-            remountAnimateState.animateScrollToIndex(8)
-            allowRemountSecondMeasure = true
-          }
-          Layout(
-            content = {
-              VerticalWheelPicker(
-                count = { 20 },
-                state = remountAnimateState,
-                itemHeight = 40.dp,
-                unfocusedCount = 2,
-              ) { index ->
-                BasicText(text = "RemountNew-$index")
-              }
-            },
-          ) { measurables, constraints ->
-            if (!allowRemountSecondMeasure) {
-              layout(0, 0) {}
-            } else {
-              val placeable = measurables.first().measure(constraints)
-              layout(placeable.width, placeable.height) {
-                placeable.placeRelative(0, 0)
-              }
-            }
-          }
-        }
-      }
-    }
-
-    composeRule.waitForIdle()
-    assertEquals(12, totalItemsDuringScrollJump)
-    assertTrue(allowScrollPlace)
-    assertEquals(8, scrollState.snappedIndex)
-    assertEquals(8, scrollState.currentIndex)
-    assertEquals(0f, scrollState.scrollPercentageOf(8))
-    composeRule.onNodeWithText("Immediate-8").assertIsDisplayed()
-    composeRule.onNodeWithText("Immediate-8").assertIsSelected()
-
-    assertEquals(12, totalItemsDuringAnimateJump)
-    assertTrue(allowAnimatePlace)
-    assertEquals(8, animateState.snappedIndex)
-    assertEquals(8, animateState.currentIndex)
-    assertEquals(0f, animateState.scrollPercentageOf(8))
-    composeRule.onNodeWithText("Animated-8").assertIsDisplayed()
-    composeRule.onNodeWithText("Animated-8").assertIsSelected()
-
-    // 首次摆放完成后再次调用 animateScrollToIndex 可正常动画滚动到新目标
-    composeRule.runOnUiThread {
-      composeScope.launch {
-        animateState.animateScrollToIndex(3)
-      }
-    }
-    composeRule.waitForIdle()
-    assertEquals(3, animateState.snappedIndex)
-    assertEquals(3, animateState.currentIndex)
-    assertEquals(0f, animateState.scrollPercentageOf(3))
-    composeRule.onNodeWithText("Animated-3").assertIsSelected()
-
-    // 卸载后复用同一 WheelPickerState 重新挂载到先测量后摆放的容器时，首次摆放前跳转同样不挂起
-    composeRule.runOnUiThread {
-      showScrollWheel = false
-    }
-    composeRule.waitForIdle()
-    assertEquals(-1, scrollState.snappedIndex)
-
-    composeRule.runOnUiThread {
-      totalItemsDuringScrollJump = -1
-      scrollMeasured = false
-      allowScrollPlace = false
-      scrollJumpTarget = 4
-      showScrollWheel = true
-    }
-    composeRule.waitForIdle()
-    assertEquals(12, totalItemsDuringScrollJump)
-    assertTrue(allowScrollPlace)
-    assertEquals(4, scrollState.snappedIndex)
-    assertEquals(4, scrollState.currentIndex)
-    assertEquals(0f, scrollState.scrollPercentageOf(4))
-    composeRule.onNodeWithText("Immediate-4").assertIsDisplayed()
-    composeRule.onNodeWithText("Immediate-4").assertIsSelected()
-
-    // 旧 1 项滚轮卸载后复用同一状态挂载 20 项新滚轮，首次测量前调用 animateScrollToIndex(8) 不丢失目标
-    assertEquals(0, remountAnimateState.snappedIndex)
-    composeRule.onNodeWithText("RemountOld-0").assertIsSelected()
-
-    composeRule.runOnUiThread {
-      remountStage = 1
-    }
-    composeRule.waitForIdle()
-    assertEquals(-1, remountAnimateState.snappedIndex)
-
-    composeRule.runOnUiThread {
-      allowRemountSecondMeasure = false
-      remountStage = 2
-    }
-    composeRule.waitForIdle()
-    assertTrue(allowRemountSecondMeasure)
-    assertEquals(8, remountAnimateState.snappedIndex)
-    assertEquals(8, remountAnimateState.currentIndex)
-    assertEquals(0f, remountAnimateState.scrollPercentageOf(8))
-    composeRule.onNodeWithText("RemountNew-8").assertIsDisplayed()
-    composeRule.onNodeWithText("RemountNew-8").assertIsSelected()
   }
 
   @Test

@@ -114,23 +114,14 @@ class WheelPickerTest {
       ),
     )
 
-    // 无限尺寸容器下传入极大 unfocusedCount 时不发生整数溢出
-    val capped = calculateSafeUnfocusedCount(
-      maxSizePx = Constraints.Infinity,
-      itemSizePx = 48,
-      unfocusedCount = Int.MAX_VALUE,
+    assertEquals(
+      20,
+      calculateSafeUnfocusedCount(
+        maxSizePx = Constraints.Infinity,
+        itemSizePx = 48,
+        unfocusedCount = 20,
+      ),
     )
-    assertTrue(capped > 0)
-    assertTrue(48L * (capped.toLong() * 2L + 1L) <= 32_766L)
-
-    // 超大但有限的 itemSize 换算像素时统一限制在 Compose Constraints 单轴上限内
-    assertEquals(1, resolveWheelItemSizePx(density = Density(1f), itemSize = 0.001.dp))
-    assertEquals(96, resolveWheelItemSizePx(density = Density(2f), itemSize = 48.dp))
-    assertEquals(MAX_CONSTRAINT_AXIS_PX, resolveWheelItemSizePx(density = Density(1f), itemSize = 400_000.dp))
-    assertEquals(MAX_CONSTRAINT_AXIS_PX, resolveWheelItemSizePx(density = Density(3f), itemSize = Float.MAX_VALUE.dp))
-    assertEquals(0, calculateSafeUnfocusedCount(maxSizePx = Constraints.Infinity, itemSizePx = MAX_CONSTRAINT_AXIS_PX, unfocusedCount = 2))
-    assertEquals(0, calculateSnappedIndex(0, MAX_CONSTRAINT_AXIS_PX / 2, count = 2, itemSizePx = MAX_CONSTRAINT_AXIS_PX))
-    assertEquals(1, calculateSnappedIndex(0, MAX_CONSTRAINT_AXIS_PX / 2 + 1, count = 2, itemSizePx = MAX_CONSTRAINT_AXIS_PX))
   }
 
   @Test
@@ -174,18 +165,6 @@ class WheelPickerTest {
     assertEquals(
       1f,
       calculateScrollPercentage(9, 5, 99, unfocusedCount = 2, itemSizePx = 100)!!,
-      0.0001f,
-    )
-
-    // 极端索引差值不发生 Int 减法符号翻转溢出
-    assertEquals(
-      -1f,
-      calculateScrollPercentage(Int.MIN_VALUE, 10, 0, unfocusedCount = 2, itemSizePx = 100)!!,
-      0.0001f,
-    )
-    assertEquals(
-      1f,
-      calculateScrollPercentage(Int.MAX_VALUE, -10, 0, unfocusedCount = 2, itemSizePx = 100)!!,
       0.0001f,
     )
   }
@@ -272,63 +251,6 @@ class WheelPickerTest {
         state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
         assertEquals(8, state.currentIndex)
         assertEquals(8, state.snappedIndex)
-
-        // 已完成测量（totalItemsCount > 0）但尚未完成首次摆放（isPositioned == false）时，两个跳转 API 均不挂起
-        val measuredUnplacedController = FakeWheelScrollController(initialIndex = 0).apply {
-          isPlaced = false
-          pauseAnimations = true
-        }
-        val measuredUnplacedState = WheelPickerState(
-          initialIndex = 0,
-          scrollController = measuredUnplacedController,
-        )
-        val unplacedOwner = Any()
-        measuredUnplacedState.updateAttachment(
-          owner = unplacedOwner,
-          count = 12,
-          unfocusedCount = 2,
-          itemSizePx = 48,
-        )
-        measuredUnplacedController.applyMeasure(count = 12)
-        assertEquals(12, measuredUnplacedController.totalItemsCount)
-        assertFalse(measuredUnplacedController.isPositioned)
-
-        measuredUnplacedState.scrollToIndex(8)
-        assertEquals(8, measuredUnplacedState.currentIndex)
-        assertEquals(8, measuredUnplacedState.snappedIndex)
-
-        measuredUnplacedState.animateScrollToIndex(5)
-        assertEquals(5, measuredUnplacedState.currentIndex)
-        assertEquals(5, measuredUnplacedState.snappedIndex)
-        assertTrue(measuredUnplacedController.animateTargetsRequested.isEmpty())
-
-        // 旧 1 项滚轮卸载后复用同一状态挂载 20 项新滚轮，首次测量前调用 animateScrollToIndex(8) 不丢失目标
-        val remountController = FakeWheelScrollController(initialIndex = 0)
-        val remountState = WheelPickerState(
-          initialIndex = 0,
-          scrollController = remountController,
-        )
-        val firstOwner = Any()
-        val secondOwner = Any()
-        remountState.updateAttachment(owner = firstOwner, count = 1, unfocusedCount = 2, itemSizePx = 48)
-        remountController.applyMeasure(count = 1)
-        assertTrue(remountController.isPositioned)
-        assertEquals(0, remountState.snappedIndex)
-
-        remountState.detach(firstOwner)
-        assertFalse(remountController.isPositioned)
-        assertEquals(1, remountController.totalItemsCount)
-
-        remountState.updateAttachment(owner = secondOwner, count = 20, unfocusedCount = 2, itemSizePx = 48)
-        assertFalse(remountController.isPositioned)
-        remountState.animateScrollToIndex(8)
-        assertTrue(remountController.animateTargetsRequested.isEmpty())
-        assertEquals(8, remountState.snappedIndex)
-
-        remountController.applyMeasure(count = 20)
-        assertTrue(remountController.isPositioned)
-        assertEquals(8, remountState.currentIndex)
-        assertEquals(8, remountState.snappedIndex)
       }
     }
   }
@@ -799,37 +721,6 @@ class WheelPickerTest {
         assertEquals(19, controller.firstVisibleItemIndex)
         assertEquals(0, controller.firstVisibleItemScrollOffset)
         assertEquals(19, state.snappedIndex)
-
-        // 第 59 帧同批次连续第二次离手不共用旧 60 帧超时
-        userScrollEnabled = true
-        harness.stepFrame()
-        controller.animateTargetsRequested.clear()
-        val firstTimeoutDragStart = controller.emitDragStart()
-        controller.beginGestureScroll(index = 20, offset = 16)
-        harness.stepFrame()
-        controller.emitDragStop(firstTimeoutDragStart)
-        controller.endGestureScroll()
-        repeat(59) {
-          harness.stepFrame()
-        }
-        assertTrue(controller.animateTargetsRequested.isEmpty())
-
-        val secondTimeoutDragStart = controller.emitDragStart()
-        controller.beginGestureScroll(index = 21, offset = 18)
-        controller.emitDragStop(secondTimeoutDragStart)
-        controller.endGestureScroll()
-        yield()
-        Snapshot.sendApplyNotifications()
-        repeat(15) {
-          harness.stepFrame()
-        }
-        assertTrue(controller.animateTargetsRequested.isEmpty())
-
-        repeat(50) {
-          harness.stepFrame()
-        }
-        assertEquals(21, state.snappedIndex)
-        assertEquals(0, controller.firstVisibleItemScrollOffset)
       } finally {
         harness.dispose()
       }
@@ -1423,97 +1314,6 @@ class WheelPickerTest {
   }
 
   @Test
-  fun testUnpositionedNonZeroOffsetDoesNotSpinAndSnapsOncePositioned() {
-    runBlocking {
-      // 1. 有帧时钟时，未摆放且存在非零偏移不得每帧唤醒空转，摆放完成后自动完成吸附
-      val framedController = FakeWheelScrollController(initialIndex = 2).also {
-        it.isPlaced = false
-      }
-      val framedState = WheelPickerState(initialIndex = 2, scrollController = framedController)
-      val framedOwner = Any()
-      val clock = BroadcastFrameClock()
-
-      framedState.updateAttachment(
-        owner = framedOwner,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-      )
-      framedController.applyMeasure(count = 10)
-      framedController.setPositionInScroll(index = 2, offset = 30)
-      assertFalse(framedController.isPositioned)
-
-      val framedObserverJob = launch(clock, start = CoroutineStart.UNDISPATCHED) {
-        framedState.observeSnappedIndex(framedOwner)
-      }
-      try {
-        Snapshot.sendApplyNotifications()
-        repeat(5) {
-          yield()
-        }
-        assertFalse(clock.hasAwaiters)
-        assertTrue(framedController.animateTargetsRequested.isEmpty())
-        assertEquals(30, framedController.firstVisibleItemScrollOffset)
-
-        framedController.isPlaced = true
-        Snapshot.sendApplyNotifications()
-        repeat(6) {
-          yield()
-        }
-        assertEquals(listOf(3), framedController.animateTargetsRequested)
-        assertEquals(0, framedController.firstVisibleItemScrollOffset)
-        assertEquals(3, framedState.snappedIndex)
-      } finally {
-        framedObserverJob.cancel()
-        framedObserverJob.join()
-      }
-
-      // 2. 无帧时钟时，未摆放且存在非零偏移不得陷入 yield 忙等循环，摆放完成后正常吸附
-      val clocklessController = FakeWheelScrollController(initialIndex = 1).also {
-        it.isPlaced = false
-      }
-      val clocklessState = WheelPickerState(initialIndex = 1, scrollController = clocklessController)
-      val clocklessOwner = Any()
-
-      clocklessState.updateAttachment(
-        owner = clocklessOwner,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-      )
-      clocklessController.applyMeasure(count = 10)
-      clocklessController.setPositionInScroll(index = 1, offset = 28)
-
-      val clocklessObserverJob = launch(start = CoroutineStart.UNDISPATCHED) {
-        clocklessState.observeSnappedIndex(clocklessOwner)
-      }
-      try {
-        Snapshot.sendApplyNotifications()
-        repeat(4) {
-          yield()
-        }
-        clocklessController.isPositionedReadCount = 0
-        repeat(20) {
-          yield()
-        }
-        assertEquals(0, clocklessController.isPositionedReadCount)
-        assertEquals(28, clocklessController.firstVisibleItemScrollOffset)
-
-        clocklessController.isPlaced = true
-        Snapshot.sendApplyNotifications()
-        repeat(6) {
-          yield()
-        }
-        assertEquals(0, clocklessController.firstVisibleItemScrollOffset)
-        assertEquals(2, clocklessState.snappedIndex)
-      } finally {
-        clocklessObserverJob.cancel()
-        clocklessObserverJob.join()
-      }
-    }
-  }
-
-  @Test
   fun testAwaitIdleDoesNotReevaluatePerScrollOffsetChange() {
     runBlocking {
       val controller = FakeWheelScrollController(initialIndex = 0)
@@ -2000,7 +1800,6 @@ private class FakeWheelScrollController(
   private val _mutatorMutex = MutatorMutex()
   private val _interactionSource = MutableInteractionSource()
   private var _hadFirstNotEmptyLayout = false
-  private var _hasCurrentMountLayout by mutableStateOf(false)
   private var _activeGate: CompletableDeferred<Unit>? = null
   private var _measuredKeys: List<Any?> = emptyList()
   private var _lastKnownFirstItemKey: Any? = null
@@ -2013,7 +1812,6 @@ private class FakeWheelScrollController(
   val completedAnimateTargets = mutableListOf<Int>()
 
   var liveMeasureSpec: (() -> Triple<Int, ((Int) -> Any)?, ((Int) -> Unit)?>)? = null
-  var isPlaced by mutableStateOf(true)
   var pauseAnimations = false
   var emulateRealLazyListAnimateTiming = false
   var supportsNativeWindowTracking = false
@@ -2030,14 +1828,7 @@ private class FakeWheelScrollController(
   override var hasVisibleItems by mutableStateOf(false)
     private set
 
-  var isPositionedReadCount = 0
   var totalItemsCountReadCount = 0
-
-  override val isPositioned: Boolean
-    get() {
-      isPositionedReadCount++
-      return isPlaced && _hasCurrentMountLayout
-    }
 
   override val totalItemsCount: Int
     get() {
@@ -2050,14 +1841,6 @@ private class FakeWheelScrollController(
       return _interactionSource
     }
 
-  override fun onPositioned() {
-    _hasCurrentMountLayout = true
-  }
-
-  override fun resetPositioned() {
-    _hasCurrentMountLayout = false
-  }
-
   fun applyMeasure(
     count: Int,
     unfocusedCount: Int = 2,
@@ -2065,7 +1848,6 @@ private class FakeWheelScrollController(
     key: ((Int) -> Any)? = null,
     onRenderItem: ((Int) -> Unit)? = null,
   ) {
-    _hasCurrentMountLayout = true
     val previousFirstIndex = firstVisibleItemIndex
     val previousFirstKey = _lastKnownFirstItemKey
     _totalItemsCount = count

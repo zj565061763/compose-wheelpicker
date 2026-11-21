@@ -2,6 +2,8 @@ package com.sd.lib.compose.wheelpicker
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -28,9 +30,6 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-
-internal const val MAX_CONSTRAINT_AXIS_PX = 262_142
-private const val MAX_UNBOUNDED_MAIN_AXIS_PX = 32_766
 
 internal enum class WheelOrientation {
   Vertical,
@@ -133,11 +132,13 @@ internal class WheelViewportState(
     orientation: WheelOrientation,
     itemSizePx: Int,
   ): Placeable {
-    val paddingDp = calculateListConstraintPaddingDp(
-      density = density,
-      mainAxisPx = orientation.maxMainAxisSize(constraints),
-      itemSizePx = itemSizePx,
-    )
+    val mainAxisPx = orientation.maxMainAxisSize(constraints)
+    val paddingDp = if (mainAxisPx == Constraints.Infinity) {
+      null
+    } else {
+      val paddingPx = ((mainAxisPx - itemSizePx) / 2).coerceAtLeast(0)
+      with(density) { paddingPx.toDp() }
+    }
     return _paddingValues.measureList(
       measurable = measurable,
       constraints = constraints,
@@ -183,7 +184,7 @@ private class WheelPaddingValues(
     measurable: Measurable,
     constraints: Constraints,
     orientation: WheelOrientation,
-    paddingDp: Dp,
+    paddingDp: Dp?,
   ): Placeable {
     val previousOrientation = _activeOrientation
     val previousPaddingDp = _activePaddingDp
@@ -363,17 +364,8 @@ internal fun createWheelViewportMeasurePolicy(
       height: Int,
     ): Int {
       return when (orientation) {
-        WheelOrientation.Vertical -> clampIntrinsicWidthForHeight(
-          rawWidthPx = measurables.getOrNull(1)?.minIntrinsicWidth(itemSizePx) ?: 0,
-          maxHeightPx = height,
-        )
-
-        WheelOrientation.Horizontal -> calculateIntrinsicMainAxisPx(
-          orientation = orientation,
-          itemSizePx = itemSizePx,
-          unfocusedCount = unfocusedCount,
-          crossAxisMaxPx = height,
-        )
+        WheelOrientation.Vertical -> measurables.getOrNull(1)?.minIntrinsicWidth(itemSizePx) ?: 0
+        WheelOrientation.Horizontal -> calculateIntrinsicMainAxisPx(itemSizePx = itemSizePx, unfocusedCount = unfocusedCount)
       }
     }
 
@@ -382,17 +374,8 @@ internal fun createWheelViewportMeasurePolicy(
       height: Int,
     ): Int {
       return when (orientation) {
-        WheelOrientation.Vertical -> clampIntrinsicWidthForHeight(
-          rawWidthPx = measurables.getOrNull(1)?.maxIntrinsicWidth(itemSizePx) ?: 0,
-          maxHeightPx = height,
-        )
-
-        WheelOrientation.Horizontal -> calculateIntrinsicMainAxisPx(
-          orientation = orientation,
-          itemSizePx = itemSizePx,
-          unfocusedCount = unfocusedCount,
-          crossAxisMaxPx = height,
-        )
+        WheelOrientation.Vertical -> measurables.getOrNull(1)?.maxIntrinsicWidth(itemSizePx) ?: 0
+        WheelOrientation.Horizontal -> calculateIntrinsicMainAxisPx(itemSizePx = itemSizePx, unfocusedCount = unfocusedCount)
       }
     }
 
@@ -401,17 +384,8 @@ internal fun createWheelViewportMeasurePolicy(
       width: Int,
     ): Int {
       return when (orientation) {
-        WheelOrientation.Vertical -> calculateIntrinsicMainAxisPx(
-          orientation = orientation,
-          itemSizePx = itemSizePx,
-          unfocusedCount = unfocusedCount,
-          crossAxisMaxPx = width,
-        )
-
-        WheelOrientation.Horizontal -> clampIntrinsicHeightForWidth(
-          rawHeightPx = measurables.getOrNull(1)?.minIntrinsicHeight(itemSizePx) ?: 0,
-          maxWidthPx = width,
-        )
+        WheelOrientation.Vertical -> calculateIntrinsicMainAxisPx(itemSizePx = itemSizePx, unfocusedCount = unfocusedCount)
+        WheelOrientation.Horizontal -> measurables.getOrNull(1)?.minIntrinsicHeight(itemSizePx) ?: 0
       }
     }
 
@@ -420,36 +394,11 @@ internal fun createWheelViewportMeasurePolicy(
       width: Int,
     ): Int {
       return when (orientation) {
-        WheelOrientation.Vertical -> calculateIntrinsicMainAxisPx(
-          orientation = orientation,
-          itemSizePx = itemSizePx,
-          unfocusedCount = unfocusedCount,
-          crossAxisMaxPx = width,
-        )
-
-        WheelOrientation.Horizontal -> clampIntrinsicHeightForWidth(
-          rawHeightPx = measurables.getOrNull(1)?.maxIntrinsicHeight(itemSizePx) ?: 0,
-          maxWidthPx = width,
-        )
+        WheelOrientation.Vertical -> calculateIntrinsicMainAxisPx(itemSizePx = itemSizePx, unfocusedCount = unfocusedCount)
+        WheelOrientation.Horizontal -> measurables.getOrNull(1)?.maxIntrinsicHeight(itemSizePx) ?: 0
       }
     }
   }
-}
-
-/** 将[itemSize]换算为限制在 Compose [Constraints] 可表示范围内的有效像素尺寸 */
-internal fun resolveWheelItemSizePx(
-  density: Density,
-  itemSize: Dp,
-): Int {
-  val rawPx = with(density) {
-    val px = itemSize.toPx()
-    when {
-      px.isNaN() -> 1
-      px >= MAX_CONSTRAINT_AXIS_PX.toFloat() -> MAX_CONSTRAINT_AXIS_PX
-      else -> itemSize.roundToPx()
-    }
-  }
-  return rawPx.coerceIn(1, MAX_CONSTRAINT_AXIS_PX)
 }
 
 /** 在列表自身重测时按本次收到的主轴约束同步绑定首尾内边距 */
@@ -472,39 +421,18 @@ internal fun Modifier.bindViewportListPadding(
   }
 }
 
-/** 将单个条目主轴尺寸固定为限制在父约束内的[sizePx] */
+/** 将单个条目主轴尺寸固定为[size] */
 internal fun Modifier.itemMainAxisSize(
   orientation: WheelOrientation,
-  sizePx: Int,
+  size: Dp,
 ): Modifier {
-  return layout { measurable, constraints ->
-    val resolvedSizePx = when (orientation) {
-      WheelOrientation.Vertical -> sizePx.coerceIn(constraints.minHeight, constraints.maxHeight)
-      WheelOrientation.Horizontal -> sizePx.coerceIn(constraints.minWidth, constraints.maxWidth)
-    }
-    val childConstraints = when (orientation) {
-      WheelOrientation.Vertical -> Constraints.fitPrioritizingHeight(
-        minWidth = constraints.minWidth,
-        maxWidth = constraints.maxWidth,
-        minHeight = resolvedSizePx,
-        maxHeight = resolvedSizePx,
-      )
-
-      WheelOrientation.Horizontal -> Constraints.fitPrioritizingWidth(
-        minWidth = resolvedSizePx,
-        maxWidth = resolvedSizePx,
-        minHeight = constraints.minHeight,
-        maxHeight = constraints.maxHeight,
-      )
-    }
-    val placeable = measurable.measure(childConstraints)
-    layout(placeable.width, placeable.height) {
-      placeable.placeRelative(0, 0)
-    }
+  return when (orientation) {
+    WheelOrientation.Vertical -> height(size)
+    WheelOrientation.Horizontal -> width(size)
   }
 }
 
-/** 根据主轴可用空间与单轴上限计算不发生溢出的单侧未选中条目数 */
+/** 根据主轴可用空间计算单侧未选中条目数，空间不足时自动缩小 */
 internal fun calculateSafeUnfocusedCount(
   maxSizePx: Int,
   itemSizePx: Int,
@@ -513,16 +441,13 @@ internal fun calculateSafeUnfocusedCount(
   if (itemSizePx <= 0 || unfocusedCount <= 0) {
     return 0
   }
-  val clampedItemPx = itemSizePx.coerceAtMost(MAX_CONSTRAINT_AXIS_PX)
-  val effectiveMaxPx = if (maxSizePx == Constraints.Infinity) {
-    MAX_UNBOUNDED_MAIN_AXIS_PX.coerceAtLeast(clampedItemPx)
-  } else {
-    maxSizePx.coerceAtMost(MAX_CONSTRAINT_AXIS_PX)
+  if (maxSizePx == Constraints.Infinity) {
+    return unfocusedCount
   }
-  if (effectiveMaxPx <= clampedItemPx) {
+  if (maxSizePx <= itemSizePx) {
     return 0
   }
-  val maxBySpace = (effectiveMaxPx - clampedItemPx) / 2 / clampedItemPx
+  val maxBySpace = (maxSizePx - itemSizePx) / 2 / itemSizePx
   return minOf(unfocusedCount, maxBySpace)
 }
 
@@ -556,15 +481,9 @@ internal fun calculateScrollPercentage(
   if (itemSizePx <= 0 || unfocusedCount < 0) {
     return null
   }
-  val total = (unfocusedCount.toLong() + 1L) * itemSizePx.toLong()
-  if (total <= 0L) {
-    return null
-  }
-
-  val minDiffIndex = -(unfocusedCount.toLong() + 1L)
-  val maxDiffIndex = unfocusedCount.toLong() + 2L
-  val diffIndex = (index.toLong() - firstVisibleItemIndex.toLong()).coerceIn(minDiffIndex, maxDiffIndex)
-  val diff = diffIndex * itemSizePx.toLong() - firstVisibleItemScrollOffset.toLong()
+  val total = (unfocusedCount + 1) * itemSizePx
+  val diffIndex = (index - firstVisibleItemIndex).coerceIn(-(unfocusedCount + 1), unfocusedCount + 2)
+  val diff = diffIndex * itemSizePx - firstVisibleItemScrollOffset
   val percentage = (diff.toFloat() / total.toFloat()).coerceIn(-1f, 1f)
   if (percentage == 0f) {
     return 0f
@@ -573,22 +492,15 @@ internal fun calculateScrollPercentage(
 }
 
 private fun calculateIntrinsicMainAxisPx(
-  orientation: WheelOrientation,
   itemSizePx: Int,
   unfocusedCount: Int,
-  crossAxisMaxPx: Int,
 ): Int {
-  val clampedItemPx = itemSizePx.coerceIn(1, MAX_CONSTRAINT_AXIS_PX)
   val safeCount = calculateSafeUnfocusedCount(
     maxSizePx = Constraints.Infinity,
-    itemSizePx = clampedItemPx,
+    itemSizePx = itemSizePx,
     unfocusedCount = unfocusedCount,
   )
-  val mainAxisPx = clampedItemPx * (safeCount * 2 + 1)
-  return when (orientation) {
-    WheelOrientation.Vertical -> clampIntrinsicHeightForWidth(rawHeightPx = mainAxisPx, maxWidthPx = crossAxisMaxPx)
-    WheelOrientation.Horizontal -> clampIntrinsicWidthForHeight(rawWidthPx = mainAxisPx, maxHeightPx = crossAxisMaxPx)
-  }
+  return itemSizePx * (safeCount * 2 + 1)
 }
 
 private fun calculatePaddingDp(
@@ -597,51 +509,4 @@ private fun calculatePaddingDp(
   unfocusedCount: Int,
 ): Dp {
   return with(density) { (itemSizePx * unfocusedCount).toDp() }
-}
-
-private fun calculateListConstraintPaddingDp(
-  density: Density,
-  mainAxisPx: Int,
-  itemSizePx: Int,
-): Dp {
-  val clampedItemPx = itemSizePx.coerceIn(1, MAX_CONSTRAINT_AXIS_PX)
-  val effectiveMainAxisPx = if (mainAxisPx == Constraints.Infinity) {
-    MAX_UNBOUNDED_MAIN_AXIS_PX.coerceAtLeast(clampedItemPx)
-  } else {
-    mainAxisPx.coerceAtMost(MAX_CONSTRAINT_AXIS_PX)
-  }
-  val paddingPx = ((effectiveMainAxisPx - clampedItemPx) / 2).coerceAtLeast(0)
-  return with(density) { paddingPx.toDp() }
-}
-
-private fun clampIntrinsicWidthForHeight(
-  rawWidthPx: Int,
-  maxHeightPx: Int,
-): Int {
-  val clampedWidth = rawWidthPx.coerceIn(0, MAX_CONSTRAINT_AXIS_PX)
-  if (maxHeightPx == Constraints.Infinity || maxHeightPx <= 0) {
-    return clampedWidth
-  }
-  return Constraints.fitPrioritizingHeight(
-    minWidth = clampedWidth,
-    maxWidth = clampedWidth,
-    minHeight = 0,
-    maxHeight = maxHeightPx.coerceAtMost(MAX_CONSTRAINT_AXIS_PX),
-  ).maxWidth
-}
-
-private fun clampIntrinsicHeightForWidth(
-  rawHeightPx: Int,
-  maxWidthPx: Int,
-): Int {
-  val clampedHeight = rawHeightPx.coerceIn(0, MAX_CONSTRAINT_AXIS_PX)
-  if (maxWidthPx == Constraints.Infinity || maxWidthPx <= 0) {
-    return clampedHeight
-  }
-  return Constraints.fitPrioritizingWidth(
-    minWidth = 0,
-    maxWidth = maxWidthPx.coerceAtMost(MAX_CONSTRAINT_AXIS_PX),
-    minHeight = clampedHeight,
-    maxHeight = clampedHeight,
-  ).maxHeight
 }

@@ -31,7 +31,7 @@ internal class WheelScrollExecutor(
     _activeScrollJob = null
   }
 
-  /** 执行跳转到[index]，未挂载、空数据或首次摆放前直接记录目标而不挂起，运行中支持并发抢占 */
+  /** 执行跳转到[index]，未挂载、空数据或首次测量前直接记录目标而不挂起，运行中支持并发抢占 */
   suspend fun scrollToIndex(
     index: Int,
     animate: Boolean,
@@ -53,7 +53,7 @@ internal class WheelScrollExecutor(
     val targetIndex = index.coerceIn(0, currentAttachment.count - 1)
     store.lastKnownIndex = targetIndex
 
-    if (!scrollController.isPositioned || scrollController.totalItemsCount <= 0) {
+    if (scrollController.totalItemsCount <= 0) {
       store.pendingTargetIndex = null
       scrollController.requestScrollToItem(index = targetIndex, scrollOffset = 0)
       store.updateSnappedIndex(targetIndex)
@@ -92,7 +92,6 @@ internal class WheelScrollExecutor(
       return false
     }
     if (
-      !scrollController.isPositioned ||
       !store.isIdleAndLayoutSynced(
         owner = owner,
         isProgrammaticScrollInFlight = isInFlight,

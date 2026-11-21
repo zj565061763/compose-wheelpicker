@@ -110,12 +110,6 @@ class WheelPickerState internal constructor(
     )
   }
 
-  internal fun onPositioned(owner: Any) {
-    if (_store.attachment?.owner === owner) {
-      _scrollController.onPositioned()
-    }
-  }
-
   internal fun onFlingHandoffResolved(owner: Any) {
     _store.onFlingHandoffResolved(owner)
   }

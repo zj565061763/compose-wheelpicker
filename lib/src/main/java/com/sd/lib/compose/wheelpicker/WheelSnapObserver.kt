@@ -32,13 +32,11 @@ internal class WheelSnapObserver(
               when (interaction) {
                 is DragInteraction.Start -> activeDrags.add(interaction)
                 is DragInteraction.Stop -> {
-                  val removed = activeDrags.remove(interaction.start)
-                  stoppedLastDrag = removed && activeDrags.isEmpty()
+                  stoppedLastDrag = activeDrags.remove(interaction.start) && activeDrags.isEmpty()
                 }
                 is DragInteraction.Cancel -> {
                   // 触摸取消后 Compose 仍会发起零速度 fling 交接，滚动仍启用时同样进入离手保护
-                  val removed = activeDrags.remove(interaction.start)
-                  stoppedLastDrag = removed && activeDrags.isEmpty()
+                  stoppedLastDrag = activeDrags.remove(interaction.start) && activeDrags.isEmpty()
                 }
               }
               if (stoppedLastDrag) {
@@ -60,10 +58,10 @@ internal class WheelSnapObserver(
     }
   }
 
-  /** 监听离手交接序号，超过最大保护帧数仍未回调时兜底解除等待 */
+  /** 监听离手交接等待状态，超过最大保护帧数仍未回调时兜底解除等待 */
   private suspend fun observeFlingHandoffTimeout(owner: Any) {
-    snapshotFlow { store.awaitingHandoffId }.collectLatest { handoffId ->
-      if (handoffId == 0) {
+    snapshotFlow { store.isAwaitingFlingHandoff }.collectLatest { awaiting ->
+      if (!awaiting) {
         return@collectLatest
       }
       val frameClock = currentCoroutineContext()[MonotonicFrameClock]
@@ -74,7 +72,7 @@ internal class WheelSnapObserver(
       } else {
         yield()
       }
-      store.onFlingHandoffTimeout(owner = owner, handoffId = handoffId)
+      store.onFlingHandoffResolved(owner)
     }
   }
 
@@ -95,12 +93,11 @@ internal class WheelSnapObserver(
         attachment = store.attachment,
         isScrollInProgress = scrollController.isScrollInProgress,
         isDragged = store.isDragged,
-        awaitingHandoffId = store.awaitingHandoffId,
+        isAwaitingFlingHandoff = store.isAwaitingFlingHandoff,
         isProgrammaticScrollInFlight = scrollExecutor.isInFlight,
         firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
         firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
         hasVisibleItems = scrollController.hasVisibleItems,
-        isPositioned = scrollController.isPositioned,
         totalItemsCount = scrollController.totalItemsCount,
       )
     }.collect { _ ->
@@ -189,10 +186,6 @@ internal class WheelSnapObserver(
           lastAutoSnapState = null
           break
         }
-        if (!scrollController.isPositioned) {
-          lastAutoSnapState = null
-          return@collect
-        }
 
         val snapState = AutoSnapState(
           firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
@@ -236,12 +229,11 @@ private data class ObserveSnapshot(
   val attachment: WheelAttachment?,
   val isScrollInProgress: Boolean,
   val isDragged: Boolean,
-  val awaitingHandoffId: Int,
+  val isAwaitingFlingHandoff: Boolean,
   val isProgrammaticScrollInFlight: Boolean,
   val firstVisibleItemIndex: Int,
   val firstVisibleItemScrollOffset: Int,
   val hasVisibleItems: Boolean,
-  val isPositioned: Boolean,
   val totalItemsCount: Int,
 )
 

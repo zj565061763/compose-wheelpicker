@@ -21,7 +21,6 @@ internal class WheelPositionStore(
   private var _flingGuardRequested = false
   private var _hasFlingGuard = false
   private var _countProvider: (() -> Int)? = null
-  private var _nextHandoffId = 0
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
 
@@ -35,13 +34,8 @@ internal class WheelPositionStore(
   var isDragged by mutableStateOf(false)
     private set
 
-  var awaitingHandoffId by mutableIntStateOf(0)
+  var isAwaitingFlingHandoff by mutableStateOf(false)
     private set
-
-  val isAwaitingFlingHandoff: Boolean
-    get() {
-      return awaitingHandoffId != 0
-    }
 
   var snappedIndex by mutableIntStateOf(-1)
     private set
@@ -114,7 +108,7 @@ internal class WheelPositionStore(
     if (_observerOwner !== owner) {
       _observerOwner = owner
       isDragged = false
-      awaitingHandoffId = 0
+      isAwaitingFlingHandoff = false
     }
   }
 
@@ -123,7 +117,7 @@ internal class WheelPositionStore(
     if (_observerOwner === owner) {
       _observerOwner = null
       isDragged = false
-      awaitingHandoffId = 0
+      isAwaitingFlingHandoff = false
     }
   }
 
@@ -134,7 +128,7 @@ internal class WheelPositionStore(
   ) {
     if (_observerOwner === owner) {
       if (dragged) {
-        awaitingHandoffId = 0
+        isAwaitingFlingHandoff = false
       }
       if (isDragged != dragged) {
         isDragged = dragged
@@ -142,33 +136,21 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 拖拽结束且启用离手保护时分配非零递增序号进入交接等待 */
+  /** 拖拽结束且启用离手保护时进入交接等待 */
   fun onDragStoppedAwaitingFling(owner: Any) {
     if (_observerOwner === owner && _hasFlingGuard) {
-      val nextId = _nextHandoffId + 1
-      _nextHandoffId = if (nextId == 0) 1 else nextId
-      awaitingHandoffId = _nextHandoffId
+      isAwaitingFlingHandoff = true
     }
   }
 
   fun clearAwaitingFlingHandoff() {
-    awaitingHandoffId = 0
+    isAwaitingFlingHandoff = false
   }
 
-  /** 嵌套滚动交接完成时解除[owner]的离手等待 */
+  /** 嵌套滚动交接完成或超时后解除[owner]的离手等待 */
   fun onFlingHandoffResolved(owner: Any) {
     if (attachment?.owner === owner || _observerOwner === owner) {
-      awaitingHandoffId = 0
-    }
-  }
-
-  /** 仅当当前等待序号仍匹配[handoffId]时解除离手超时保护 */
-  fun onFlingHandoffTimeout(
-    owner: Any,
-    handoffId: Int,
-  ) {
-    if ((attachment?.owner === owner || _observerOwner === owner) && awaitingHandoffId == handoffId) {
-      awaitingHandoffId = 0
+      isAwaitingFlingHandoff = false
     }
   }
 
@@ -185,8 +167,7 @@ internal class WheelPositionStore(
     val previousAttachment = attachment
     if (previousAttachment == null || previousAttachment.owner !== owner) {
       isDragged = false
-      awaitingHandoffId = 0
-      scrollController.resetPositioned()
+      isAwaitingFlingHandoff = false
     }
     _unfocusedCount = unfocusedCount
     _reverseVisualDirection = reverseVisualDirection
@@ -194,7 +175,7 @@ internal class WheelPositionStore(
     _countProvider = countProvider
     _hasFlingGuard = flingGuardEnabled && count > 0
     if (!_hasFlingGuard) {
-      awaitingHandoffId = 0
+      isAwaitingFlingHandoff = false
     }
 
     if (count <= 0) {
@@ -304,8 +285,7 @@ internal class WheelPositionStore(
     _countProvider = null
     _hasFlingGuard = false
     isDragged = false
-    awaitingHandoffId = 0
-    scrollController.resetPositioned()
+    isAwaitingFlingHandoff = false
     attachment = null
     snappedIndex = -1
     return true

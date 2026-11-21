@@ -127,6 +127,14 @@ private fun DateWheelColumn(
   }
 }
 
+@Preview(showBackground = true)
+@Composable
+private fun Preview() {
+  AppTheme {
+    Content()
+  }
+}
+
 /** 计算[year]年[month]月的总天数 */
 private fun daysInMonth(year: Int, month: Int): Int {
   return Calendar.getInstance().apply {
@@ -138,12 +146,4 @@ private fun daysInMonth(year: Int, month: Int): Int {
 
 private fun Int.twoDigits(): String {
   return toString().padStart(2, '0')
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun Preview() {
-  AppTheme {
-    Content()
-  }
 }
