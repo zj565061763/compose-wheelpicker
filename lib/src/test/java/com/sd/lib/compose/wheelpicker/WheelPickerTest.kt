@@ -658,7 +658,7 @@ class WheelPickerTest {
           pauseAnimations = true
         }
         val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-        val items by mutableStateOf((0..29).toList())
+        var items by mutableStateOf((0..29).toList())
 
         val harness = WheelCompositionHarness(
           parentContext = coroutineContext,
@@ -688,61 +688,75 @@ class WheelPickerTest {
           assertEquals(4, state.snappedIndex)
 
           // 2. 取消旧动画时调用方在取消处理中同步发起新跳转，后发起的目标 10 生效且被抢占的跳转 4 抛出 CancellationException
-          val unconfinedScope = CoroutineScope(Dispatchers.Unconfined + harness.clock)
-          var reentrantScrollJob: Job? = null
-          val cancelledAnimJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-              state.animateScrollToIndex(15)
-            } catch (cancelled: CancellationException) {
-              reentrantScrollJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                state.scrollToIndex(10)
-              }
-              throw cancelled
-            }
-          }
-          assertTrue(state.isScrollInProgress)
-
-          var preemptedScrollCancelled = false
+          val unconfinedJob = Job(coroutineContext[Job])
+          val unconfinedScope = CoroutineScope(coroutineContext + unconfinedJob + Dispatchers.Unconfined + harness.clock)
           try {
-            state.scrollToIndex(4)
-          } catch (_: CancellationException) {
-            preemptedScrollCancelled = true
-          }
-          cancelledAnimJob.join()
-          reentrantScrollJob?.join()
-          assertTrue(preemptedScrollCancelled)
-          assertEquals(10, controller.firstVisibleItemIndex)
-          assertEquals(10, state.currentIndex)
-          assertEquals(10, state.snappedIndex)
-
-          // 取消旧动画时同步重入发起新动画 18，被抢占的跳转 4 抛出 CancellationException，新动画引用不被清空且推进完成后停在 18
-          var reentrantAnimateJob: Job? = null
-          val cancelledForReanimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-              state.animateScrollToIndex(15)
-            } catch (cancelled: CancellationException) {
-              reentrantAnimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                state.animateScrollToIndex(18)
+            var reentrantScrollJob: Job? = null
+            val cancelledAnimJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+              try {
+                state.animateScrollToIndex(15)
+              } catch (cancelled: CancellationException) {
+                reentrantScrollJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                  state.scrollToIndex(10)
+                }
+                throw cancelled
               }
-              throw cancelled
             }
-          }
-          assertTrue(state.isScrollInProgress)
+            assertTrue(state.isScrollInProgress)
 
-          var preemptedForReanimateCancelled = false
-          try {
-            state.scrollToIndex(4)
-          } catch (_: CancellationException) {
-            preemptedForReanimateCancelled = true
+            var preemptedScrollCancelled = false
+            try {
+              state.scrollToIndex(4)
+            } catch (_: CancellationException) {
+              preemptedScrollCancelled = true
+            }
+            cancelledAnimJob.join()
+            reentrantScrollJob?.join()
+            assertTrue(preemptedScrollCancelled)
+            assertEquals(10, controller.firstVisibleItemIndex)
+            assertEquals(10, state.currentIndex)
+            assertEquals(10, state.snappedIndex)
+
+            // 取消旧动画时同步重入发起新动画 18，验证执行器仍持有新动画引用并在清空列表时无需手动恢复即可取消结束
+            var reentrantAnimateJob: Job? = null
+            val cancelledForReanimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+              try {
+                state.animateScrollToIndex(15)
+              } catch (cancelled: CancellationException) {
+                reentrantAnimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                  state.animateScrollToIndex(18)
+                }
+                throw cancelled
+              }
+            }
+            assertTrue(state.isScrollInProgress)
+
+            var preemptedForReanimateCancelled = false
+            try {
+              state.scrollToIndex(4)
+            } catch (_: CancellationException) {
+              preemptedForReanimateCancelled = true
+            }
+            cancelledForReanimateJob.join()
+            assertTrue(preemptedForReanimateCancelled)
+            val activeReentrantJob = checkNotNull(reentrantAnimateJob)
+            assertTrue(activeReentrantJob.isActive)
+            assertTrue(state.isScrollInProgress)
+
+            items = emptyList()
+            harness.stepFrame()
+            assertFalse(activeReentrantJob.isActive)
+            activeReentrantJob.join()
+            assertFalse(state.isScrollInProgress)
+            assertEquals(-1, state.snappedIndex)
+
+            items = (0..29).toList()
+            harness.stepFrame()
+            assertEquals(18, state.currentIndex)
+            assertEquals(18, state.snappedIndex)
+          } finally {
+            unconfinedJob.cancel()
           }
-          cancelledForReanimateJob.join()
-          assertTrue(preemptedForReanimateCancelled)
-          assertTrue(state.isScrollInProgress)
-          controller.resumeActiveAnimation()
-          reentrantAnimateJob?.join()
-          harness.stepFrame()
-          assertEquals(18, state.currentIndex)
-          assertEquals(18, state.snappedIndex)
 
           // 3. 含 MonotonicFrameClock 的协程调用 animateScrollToIndex 正常完成
           controller.pauseAnimations = false

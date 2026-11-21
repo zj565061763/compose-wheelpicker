@@ -83,6 +83,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不支持逐项独立 `MutableState` 暗中突变：不支持在稳定 `key` 闭包内用每个条目独立的 `MutableState` 原地改值却不触发列表重组，数据变更需通过不可变列表重组或 `SnapshotStateList` 结构修改驱动。
 - 不跨空列表或重挂载记忆旧 `key`：列表变空（`count() == 0`）或组件卸载重挂载后统一按最近已知索引恢复并限制在新 `0..<count` 范围内，重新挂载时重置底层残留锚点。
 - 不在清空列表同步重测的重组前窗口冻结 `currentIndex`：与官方 `LazyListState.firstVisibleItemIndex` 及 `PagerState.currentPage` 一致，清空列表并在重组前触发同步重测时实时滚动索引返回 `0`（稳定选中态 `snappedIndex` 仍保持原值并在回填后恢复），不在测量数与挂载数未同步时将 `currentIndex` 冻结为旧索引。
+- 不兜底同帧清空、同步空测量再同帧回填的位置重置：与官方 `LazyListState` 及 `PagerState` 一致，在同一帧内清空列表、触发同步空测量再立即回填同等数量条目属人工构造的极端交错，位置归零属预期上游行为，不在状态或观察流中额外维护瞬态空测量标志。
 - 不在动画飞行途中按 `key` 改道：`animateScrollToIndex` 执行期间若发生数据增删重排，不中途取消并追踪旧 `key`，始终滚向调用时锁定的目标索引。
 - 不替外部无帧时钟协程代借帧时钟或额外补充帧时钟文档：`animateScrollToIndex` 的行为与 KDoc 均与官方 `LazyListState.animateScrollToItem`、`PagerState.animateScrollToPage` 一致，需在含 `MonotonicFrameClock` 的 Compose 协程作用域（如 `LaunchedEffect`、`rememberCoroutineScope`）中调用，不为缺少帧时钟的外部协程跨协程借用或等待帧时钟，也不在公开 KDoc 中额外说明该通用要求。
 - 不做同帧抢跑越界等待：修改数据状态后未等重组就在同一帧调用越界 `scrollToIndex` 时，按调用当下 `count()` 返回值直接限制边界，不做跨帧挂起等待。
