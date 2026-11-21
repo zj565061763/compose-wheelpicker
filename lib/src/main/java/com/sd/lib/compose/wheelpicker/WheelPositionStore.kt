@@ -179,18 +179,7 @@ internal class WheelPositionStore(
     }
 
     if (count <= 0) {
-      if (
-        previousAttachment != null &&
-        previousAttachment.count > 0 &&
-        pendingTargetIndex == null &&
-        scrollController.totalItemsCount > 0 &&
-        isLayoutSyncedWith(previousAttachment.count)
-      ) {
-        val lastIndex = currentIndex
-        if (lastIndex >= 0) {
-          lastKnownIndex = lastIndex
-        }
-      }
+      recordLiveIndexIfNoPending(previousAttachment)
       attachment = WheelAttachment(owner = owner, count = 0, itemSizePx = itemSizePx)
       snappedIndex = -1
       return
@@ -202,19 +191,6 @@ internal class WheelPositionStore(
 
     var restoredTarget: Int? = null
     if (wasInactiveOrSwitched) {
-      if (
-        previousAttachment != null &&
-        previousAttachment.owner !== owner &&
-        previousAttachment.count > 0 &&
-        pendingTargetIndex == null &&
-        scrollController.totalItemsCount > 0 &&
-        isLayoutSyncedWith(previousAttachment.count)
-      ) {
-        val liveIndex = currentIndex
-        if (liveIndex >= 0) {
-          lastKnownIndex = liveIndex
-        }
-      }
       val rawTarget = pendingTargetIndex ?: lastKnownIndex
       val restoreTarget = rawTarget.coerceIn(0, count - 1)
       pendingTargetIndex = null
@@ -270,17 +246,7 @@ internal class WheelPositionStore(
     if (current?.owner !== owner) {
       return false
     }
-    if (
-      current.count > 0 &&
-      pendingTargetIndex == null &&
-      scrollController.totalItemsCount > 0 &&
-      isLayoutSyncedWith(current.count)
-    ) {
-      val lastIndex = currentIndex
-      if (lastIndex >= 0) {
-        lastKnownIndex = lastIndex
-      }
-    }
+    recordLiveIndexIfNoPending(current)
     _flingGuardRequested = false
     _countProvider = null
     _hasFlingGuard = false
@@ -301,37 +267,11 @@ internal class WheelPositionStore(
 
   /** 布局已同步时将实时中心索引记录为最近已知位置 */
   fun updateLastKnownIndexFromLive() {
-    val current = attachment
-    if (
-      current != null &&
-      current.count > 0 &&
-      scrollController.totalItemsCount > 0 &&
-      isLayoutSyncedWith(current.count)
-    ) {
+    if (hasSyncedLivePosition()) {
       val liveIndex = currentIndex
       if (liveIndex >= 0) {
         lastKnownIndex = liveIndex
       }
-    }
-  }
-
-  /** 新列表完成测量后若实际末项仍残留正偏移，则在静止且无待交接手势时将末项偏移归零 */
-  fun clampLastItemResidualOffsetIfMeasured(
-    owner: Any,
-    isProgrammaticScrollInFlight: Boolean,
-  ) {
-    val current = attachment ?: return
-    if (
-      isIdleAndLayoutSynced(
-        owner = owner,
-        isProgrammaticScrollInFlight = isProgrammaticScrollInFlight,
-      ) &&
-      scrollController.hasVisibleItems &&
-      scrollController.firstVisibleItemIndex >= current.count - 1 &&
-      scrollController.firstVisibleItemScrollOffset > 0
-    ) {
-      val lastIndex = current.count - 1
-      scrollController.requestScrollToItem(index = lastIndex, scrollOffset = 0)
     }
   }
 
@@ -384,18 +324,28 @@ internal class WheelPositionStore(
     if (pending != null) {
       return pending.coerceAtLeast(0)
     }
-    val current = attachment
-    if (
-      current != null &&
-      current.count > 0 &&
-      scrollController.totalItemsCount > 0 &&
-      isLayoutSyncedWith(current.count)
-    ) {
+    if (hasSyncedLivePosition()) {
       val live = currentIndex
       if (live >= 0) {
         return live
       }
     }
     return lastKnownIndex.coerceAtLeast(0)
+  }
+
+  private fun hasSyncedLivePosition(target: WheelAttachment? = attachment): Boolean {
+    return target != null &&
+      target.count > 0 &&
+      scrollController.totalItemsCount > 0 &&
+      isLayoutSyncedWith(target.count)
+  }
+
+  private fun recordLiveIndexIfNoPending(target: WheelAttachment?) {
+    if (pendingTargetIndex == null && hasSyncedLivePosition(target)) {
+      val liveIndex = currentIndex
+      if (liveIndex >= 0) {
+        lastKnownIndex = liveIndex
+      }
+    }
   }
 }

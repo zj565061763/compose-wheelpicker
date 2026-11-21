@@ -68,11 +68,7 @@ internal class WheelViewportState(
     paddingDp = calculatePaddingDp(
       density = density,
       itemSizePx = itemSizePx,
-      unfocusedCount = calculateSafeUnfocusedCount(
-        maxSizePx = Constraints.Infinity,
-        itemSizePx = itemSizePx,
-        unfocusedCount = initialUnfocusedCount,
-      ),
+      unfocusedCount = initialUnfocusedCount,
     ),
   )
 
@@ -495,12 +491,7 @@ private fun calculateIntrinsicMainAxisPx(
   itemSizePx: Int,
   unfocusedCount: Int,
 ): Int {
-  val safeCount = calculateSafeUnfocusedCount(
-    maxSizePx = Constraints.Infinity,
-    itemSizePx = itemSizePx,
-    unfocusedCount = unfocusedCount,
-  )
-  return itemSizePx * (safeCount * 2 + 1)
+  return itemSizePx * (unfocusedCount * 2 + 1)
 }
 
 private fun calculatePaddingDp(

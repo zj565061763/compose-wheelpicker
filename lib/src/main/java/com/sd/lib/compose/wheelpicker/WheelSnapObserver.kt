@@ -84,7 +84,7 @@ internal class WheelSnapObserver(
       scrollExecutor.isInFlight
   }
 
-  /** 观察滚轮快照变化，静止且布局同步后处理末项残余偏移、自动吸附并结算吸附索引 */
+  /** 观察滚轮快照变化，静止且布局同步后执行自动吸附并结算吸附索引 */
   private suspend fun observeScrollAndSnap(owner: Any) {
     var wasActiveGestureOrScroll = false
     var lastAutoSnapState: AutoSnapState? = null
@@ -175,11 +175,6 @@ internal class WheelSnapObserver(
           lastAutoSnapState = null
           return@collect
         }
-
-        store.clampLastItemResidualOffsetIfMeasured(
-          owner = owner,
-          isProgrammaticScrollInFlight = scrollExecutor.isInFlight,
-        )
 
         val currentOffset = scrollController.firstVisibleItemScrollOffset
         if (!scrollController.hasVisibleItems || currentOffset == 0) {

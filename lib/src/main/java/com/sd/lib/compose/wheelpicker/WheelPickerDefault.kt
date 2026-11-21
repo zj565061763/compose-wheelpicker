@@ -66,47 +66,37 @@ private fun WheelPickerFocusIndicator(
     modifier = modifier
       .fillMaxSize()
       .drawBehind {
-        val strokePx = if (thickness == Dp.Hairline) {
-          1f
-        } else {
-          thickness.toPx()
-        }
-        if (!strokePx.isFinite() || strokePx <= 0f || color.alpha <= 0f) {
+        val strokePx = if (thickness == Dp.Hairline) 1f else thickness.toPx()
+        if (strokePx <= 0f) {
           return@drawBehind
         }
         when (orientation) {
           WheelOrientation.Vertical -> {
-            val lineHeight = strokePx.coerceAtMost(size.height)
-            if (lineHeight > 0f && size.width > 0f) {
-              val lineSize = Size(width = size.width, height = lineHeight)
-              drawRect(
-                color = color,
-                topLeft = Offset.Zero,
-                size = lineSize,
-              )
-              drawRect(
-                color = color,
-                topLeft = Offset(x = 0f, y = size.height - lineHeight),
-                size = lineSize,
-              )
-            }
+            val lineSize = Size(width = size.width, height = strokePx)
+            drawRect(
+              color = color,
+              topLeft = Offset.Zero,
+              size = lineSize,
+            )
+            drawRect(
+              color = color,
+              topLeft = Offset(x = 0f, y = size.height - strokePx),
+              size = lineSize,
+            )
           }
 
           WheelOrientation.Horizontal -> {
-            val lineWidth = strokePx.coerceAtMost(size.width)
-            if (lineWidth > 0f && size.height > 0f) {
-              val lineSize = Size(width = lineWidth, height = size.height)
-              drawRect(
-                color = color,
-                topLeft = Offset.Zero,
-                size = lineSize,
-              )
-              drawRect(
-                color = color,
-                topLeft = Offset(x = size.width - lineWidth, y = 0f),
-                size = lineSize,
-              )
-            }
+            val lineSize = Size(width = strokePx, height = size.height)
+            drawRect(
+              color = color,
+              topLeft = Offset.Zero,
+              size = lineSize,
+            )
+            drawRect(
+              color = color,
+              topLeft = Offset(x = size.width - strokePx, y = 0f),
+              size = lineSize,
+            )
           }
         }
       },

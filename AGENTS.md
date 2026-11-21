@@ -64,12 +64,12 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 离手衔接保护：禁用默认 `overscrollEffect`，松手或触摸取消时通过 `isAwaitingFlingHandoff` 配合 `NestedScrollConnection`（含 60 帧超时兜底）等待嵌套滚动父容器完成常规 `onPreFling`，不得提前启动自动吸附截停 fling。
 - 静止自动吸附：停止在非零像素偏移时自动归位至最近条目并更新 `snappedIndex`。
 - 预跳转：未挂载、空数据或首次测量完成前调用 `scrollToIndex` / `animateScrollToIndex` 不挂起，通过 `requestScrollToItem` 记录目标并在非空挂载测量后限制在 `0..<count` 内生效。
-- 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时仅将上一轮吸附值立即夹紧至 `count - 1`，待新列表完成测量且手势与离手交接全部结束后再更新 `snappedIndex` 并将实际末项残留正偏移归零，避免交接完成前发布未测量的旧索引或覆盖底层存活稳定 `key` 锚点。
+- 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时先将上一轮吸附值立即夹紧至 `count - 1`，避免覆盖底层存活稳定 `key` 锚点，待新列表完成测量且滚动静止后再按实际中心项更新 `snappedIndex`。
 
 ## 设计取舍与代码审查约定
 
-- 以官方组件为标准：状态管理、滚动、嵌套滚动与无障碍语义统一对齐官方 `LazyColumn`、`LazyListState` 与 `Pager` 的常规边界。
-- 不为极端情况复杂化架构：实现与修复时保持整体设计简洁，不要为了处理极端或人工构造的边界情况改变整体设计、引入复杂机制。
+- 以官方组件为标准：状态管理、滚动、嵌套滚动、分割线绘制与无障碍语义统一对齐官方 `LazyColumn`、`LazyListState`、`Pager`、`PagerState` 及 `HorizontalDivider` / `VerticalDivider` 的常规边界。
+- 不为极端情况复杂化架构：实现与修复时保持整体设计简洁，不要为了处理极端或人工构造的边界情况改变整体设计、引入复杂机制或编写极端交错测试。
 - 代码审查与问题核查对齐官方边界：自主审查或核查审查意见时，必须按“以官方组件为标准、对齐官方边界、有意设计不得作为缺陷或功能缺失报告”的约束过滤，官方组件同样未兜底或未在 KDoc 说明的场景不认定为问题。
 
 以下具体取舍均属有意设计，代码审查不得作为缺陷或功能缺失报告：
@@ -78,22 +78,25 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不在公开状态读取与内部观察流中主动求值 `count()`：与官方 `PagerState` 一致，`currentIndex`、`snappedIndex`、`scrollPercentageOf` 及 `WheelSnapObserver` 仅基于已同步的挂载计数计算，仅在组合期、测量期与显式调用 `scrollToIndex` / `animateScrollToIndex` 时求值 `count()`，修改列表后未完成重组或跳转前读取公开状态仍为上一轮已同步值，避免 `snapshotFlow` 在条件卸载前抢先求值 `count()`、无关条目语义与图层随增删失效以及空态同帧回填在重组前短暂暴露假索引 `0`。
 - 不兜底混用实时 `count` 与旧列表快照的越界：与官方 `Pager` 一致，同帧更新数据并在重组前立即跳转时，调用方需在 `count`、`key` 与 `content` 的 lambda 内读取同一列表状态，库层不为混用实时条目数与重组期捕获的不可变列表导致的越界提供兜底。
 - 不兜底或额外说明非可观察的 `count` 数据源：与官方 `LazyColumn` 及 `rememberPagerState` 一致，动态数据使用 Compose 可观察状态属通用前提，既不为直接裸读 `StateFlow.value` 或普通可变集合等非可观察数据源增加兜底，也不在 `count` 的公开 KDoc 中额外说明该前提。
+- 不支持单个 `WheelPickerState` 同时挂载多个滚轮实例：与官方 `LazyListState` 及 `PagerState` 一致，仅支持单实例挂载与常规 `if / else` 条件分支顺序切换，不为 `AnimatedContent`、`Crossfade` 等过渡期新旧实例并存共享同一 `state` 做多实例状态转存或协同。
 - 不提供按 `key` 跳转 API：不提供 `scrollToKey` / `animateScrollToKey`，调用方需自行在数据源查找索引后调用 `scrollToIndex` / `animateScrollToIndex`。
 - 不做跨窗口重排追踪：不在状态层维护独立 `key` 缓存、全表扫描或快照探测（如 `keyProbeIndex`），单次重排跨度超出 `LazyList` 原生最近邻窗口（约 ±100 项）时按原索引位置回退。
 - 不支持逐项独立 `MutableState` 暗中突变：不支持在稳定 `key` 闭包内用每个条目独立的 `MutableState` 原地改值却不触发列表重组，数据变更需通过不可变列表重组或 `SnapshotStateList` 结构修改驱动。
 - 不跨空列表或重挂载记忆旧 `key`：列表变空（`count() == 0`）或组件卸载重挂载后统一按最近已知索引恢复并限制在新 `0..<count` 范围内，重新挂载时重置底层残留锚点。
+- 不维护额外的缩容末项像素偏移修正：列表主轴可用空间恒不小于单个条目尺寸，缩容后末项正偏移回拉归零交由 `LazyListMeasure` 原生滚动回退处理，不在状态层或观察流中额外调用 `requestScrollToItem` 干预。
 - 不兜底清空列表后重组前触发同步空测量的位置重置：与官方 `LazyListState` 及 `PagerState` 一致，清空列表并在重组完成前触发同步空测量属人工构造的极端交错，底层位置归零属预期上游行为，不在状态或观察流中维护额外空测量标志。
 - 不兜底同帧改表跳转后又在同一帧改回原条目数：与官方 `Pager` 一致，仅支持修改列表后在重组前调用跳转的常规顺序，不在组件或状态层维护额外的计数失效通知以兜底同一帧内反复改回原长度的极端构造。
 - 不拦截取消回调同步重入或已取消协程发起的跳转：与官方 `LazyListState` 及 `MutatorMutex` 一致，不对被抢占协程在取消处理块内同步重入发起新跳转或从已取消协程调用跳转做额外拦截。
 - 不兜底自定义父 `Layout` 已测量却扣留摆放的反模式：与官方 `LazyListState` 及 `PagerState` 一致，不在列表上额外挂载 `onGloballyPositioned` 追踪摆放状态以兜底父布局完成测量却阻塞等待跳转返回才执行 `placeRelative` 的人工构造场景。
 - 不兜底超出 Compose `Constraints` 上限的极端尺寸或数值：与官方 `Modifier.height`、`PageSize.Fixed`、`IntrinsicSize` 及 `PagerState` 一致，不为极端超大 `itemSize`、无界容器下 `Int.MAX_VALUE` 级 `unfocusedCount` 或 `Int.MIN_VALUE` / `Int.MAX_VALUE` 级偏移索引差值做截断与 `Long` 防溢出兜底。
+- 不对默认焦点分割线做非常规 `thickness` 截断兜底：与官方 `HorizontalDivider` / `VerticalDivider` 一致，`WheelPickerFocusVertical` 与 `WheelPickerFocusHorizontal` 仅将 `Dp.Hairline` 绘制为 `1px` 细线并对负值不绘制，不为 `Dp.Unspecified`、`Dp.Infinity` 或超出焦点区域尺寸的 `thickness` 做额外截断、校验或公开 KDoc 说明。
 - 不在动画飞行途中按 `key` 改道：`animateScrollToIndex` 执行期间若发生数据增删重排，不中途取消并追踪旧 `key`，始终滚向调用时锁定的目标索引。
 - 不替外部无帧时钟协程代借帧时钟或额外补充帧时钟文档：`animateScrollToIndex` 的行为与 KDoc 均与官方 `LazyListState.animateScrollToItem`、`PagerState.animateScrollToPage` 一致，需在含 `MonotonicFrameClock` 的 Compose 协程作用域（如 `LaunchedEffect`、`rememberCoroutineScope`）中调用，不为缺少帧时钟的外部协程跨协程借用或等待帧时钟，也不在公开 KDoc 中额外说明该通用要求。
 - 不在 `snappedIndex` 公开 KDoc 中罗列缩容夹紧等边界例外：与官方 `PagerState.settledPage` 的 KDoc 一致，公开注释仅说明滚动中保持上一次吸附值并在停稳后更新的常规语义，非空缩容越界时立即夹紧至 `count - 1` 属防越界安全不变量，不在单行公开 KDoc 中堆砌该细节。
 - 不做同帧抢跑越界等待：修改数据状态后未等重组就在同一帧调用越界 `scrollToIndex` 时，按调用当下 `count()` 返回值直接限制边界，不做跨帧挂起等待。
 - 不做半格偏移删首项补偿：手势停留在非零像素偏移期间并发删除当前首项时，交由 `LazyList` 原生布局与松手后的自动吸附处理。
 - 不对超大条目跨项动画做像素瞬移裁剪：`animateScrollToIndex` 直接复用官方 `LazyListState.animateScrollToItem`（仅在跨度超过 100 项时瞬移），跨项像素距离较大时的动画耗时属上游原生行为，不拆分为预跳转加短动画。
-- 不对异常挂起或乱序恢复的父级嵌套滚动做跨协程拦截：嵌套滚动行为与官方 `LazyColumn` / `Pager` 对齐，仅针对 `ModalBottomSheet` 等遵守常规协作契约的父容器在 `onPreFling` 期间延迟自动吸附，不通过 `NestedScrollDispatcher` 追踪或取消外层作用域的离手协程 `Job`，不处理自定义父容器在 `onPreFling` / `onPostFling` 中超长挂死、乱序恢复或挂起期间并发编程式跳转等极端构造场景。
+- 不对异常挂起或乱序恢复的父级嵌套滚动做跨协程拦截：嵌套滚动行为与官方 `LazyColumn` / `Pager` 对齐，仅针对 `ModalBottomSheet` 等遵守常规协作契约的父容器在 `onPreFling` 期间延迟自动吸附，不通过 `NestedScrollDispatcher` 追踪或取消外层作用域的离手协程 `Job`，不处理自定义父容器在 `onPreFling` / `onPostFling` 中超长挂死、连续同批次离手超时、乱序恢复或挂起期间并发增删数据与编程式跳转等极端构造场景。
 - 不向内层自定义可点击节点下发选中语义：条目外层 `Box` 通过 `semantics(mergeDescendants = true)` 为常规非交互内容合并暴露 `Selected` 状态，调用方若在 `content` 内自行使用 `Modifier.clickable` 等自带语义合并的交互节点，需按 Compose 规则自行使用 `Modifier.selectable` 声明选中态，库层不新增点击回调或作用域 API。
 - 不支持条目内嵌可滚动子容器的独立嵌套滚动隔离：滚轮条目面向常规展示内容设计，不考虑在 `content` 内嵌 `LazyRow`、`LazyColumn` 等子级滚动容器的场景。
 - 保持 `compose-foundation` 为 `implementation` 依赖：常规接入项目均会引入 `material3`、`material` 或 `foundation`，`:lib` 保持 `implementation(composeBom)` 与 `implementation(libs.androidx.compose.foundation)` 以避免向消费方传递版本约束，不改为 `api` 声明。
@@ -106,5 +109,5 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 
 | 测试类 | 覆盖范围 |
 |---|---|
-| `WheelPickerTest` | 有限空间下 `unfocusedCount` 自动缩小、列表按当次主轴约束计算内边距、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载与首次测量前预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与末项残余偏移归零、重组前改表跳转同步、公开状态与观察流不抢跑求值 `count`、常规 `key` 增删重排同步 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`LookaheadScope` + `animateBounds` 展开与收缩途中跳转保持末项居中与选中、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移及 `onPreFling` 挂起期间缩容夹紧与稳定 `key` 保持、重组前缩容或扩容立即跳转不越界、条件渲染卸载安全与空态回填恢复、重挂载跳转、条目选中无障碍语义更新 |
+| `WheelPickerTest` | 有限空间下 `unfocusedCount` 自动缩小、列表按当次主轴约束计算内边距、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载与首次测量前预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与稳定 `key` 保持、重组前改表跳转同步、公开状态与观察流不抢跑求值 `count`、常规 `key` 增删重排同步 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`LookaheadScope` + `animateBounds` 展开与收缩途中跳转保持末项居中与选中、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与头删缩容稳定 `key` 保持、重组前缩容或扩容立即跳转不越界、条件渲染卸载安全与空态回填恢复、重挂载跳转、条目选中无障碍语义更新 |
