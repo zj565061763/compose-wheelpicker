@@ -747,6 +747,7 @@ class WheelPickerTest {
             harness.stepFrame()
             assertFalse(activeReentrantJob.isActive)
             activeReentrantJob.join()
+            assertFalse(activeReentrantJob.isCancelled)
             assertFalse(state.isScrollInProgress)
             assertEquals(-1, state.snappedIndex)
 
@@ -754,6 +755,40 @@ class WheelPickerTest {
             harness.stepFrame()
             assertEquals(18, state.currentIndex)
             assertEquals(18, state.snappedIndex)
+
+            // 列表始终非空时，同步重入发起的新动画 21 放行后正常滚至目标并结算 snappedIndex
+            var normalReentrantAnimateJob: Job? = null
+            val cancelledForNormalReanimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+              try {
+                state.animateScrollToIndex(15)
+              } catch (cancelled: CancellationException) {
+                normalReentrantAnimateJob = unconfinedScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                  state.animateScrollToIndex(21)
+                }
+                throw cancelled
+              }
+            }
+            assertTrue(state.isScrollInProgress)
+
+            var preemptedForNormalReanimateCancelled = false
+            try {
+              state.scrollToIndex(4)
+            } catch (_: CancellationException) {
+              preemptedForNormalReanimateCancelled = true
+            }
+            cancelledForNormalReanimateJob.join()
+            assertTrue(preemptedForNormalReanimateCancelled)
+            val completedReentrantJob = checkNotNull(normalReentrantAnimateJob)
+            assertTrue(completedReentrantJob.isActive)
+            assertTrue(state.isScrollInProgress)
+
+            controller.resumeActiveAnimation()
+            completedReentrantJob.join()
+            assertFalse(completedReentrantJob.isCancelled)
+            harness.stepFrame()
+            assertEquals(21, controller.firstVisibleItemIndex)
+            assertEquals(21, state.currentIndex)
+            assertEquals(21, state.snappedIndex)
           } finally {
             unconfinedJob.cancel()
           }
