@@ -305,7 +305,7 @@ class WheelPickerTest {
         jobB.cancel()
         jobB.join()
 
-        // 飞行动画期间旧组件卸载并挂载新组件时，结束旧动画并将待跳转目标限制在新组件边界
+        // 飞行动画期间旧组件单独卸载时静默结束旧动画，后续挂载新组件时将待跳转目标限制在新边界
         val controller = FakeWheelScrollController(initialIndex = 1).apply {
           pauseAnimations = true
         }
@@ -326,6 +326,33 @@ class WheelPickerTest {
         handoffState.updateAttachment(owner = ownerD, count = 5, unfocusedCount = 2, itemSizePx = 48)
         assertEquals(4, handoffState.currentIndex)
         assertEquals(4, handoffState.snappedIndex)
+
+        // 常规 if / else 同帧切换滚轮实例（先卸载旧实例并立即挂载新实例）时，旧动画抛出 CancellationException 且新实例恢复目标索引
+        val switchController = FakeWheelScrollController(initialIndex = 1).apply {
+          pauseAnimations = true
+        }
+        val switchState = WheelPickerState(initialIndex = 1, scrollController = switchController)
+        val ownerE = Any()
+        val ownerF = Any()
+        switchState.updateAttachment(owner = ownerE, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        switchController.applyMeasure(count = 10)
+
+        var switchCancelled = false
+        val switchJob = launch(start = CoroutineStart.UNDISPATCHED) {
+          try {
+            switchState.animateScrollToIndex(8)
+          } catch (_: CancellationException) {
+            switchCancelled = true
+          }
+        }
+        assertTrue(switchState.isScrollInProgress)
+
+        switchState.detach(ownerE)
+        switchState.updateAttachment(owner = ownerF, count = 5, unfocusedCount = 2, itemSizePx = 48)
+        switchJob.join()
+        assertTrue(switchCancelled)
+        assertEquals(4, switchState.currentIndex)
+        assertEquals(4, switchState.snappedIndex)
       }
     }
   }

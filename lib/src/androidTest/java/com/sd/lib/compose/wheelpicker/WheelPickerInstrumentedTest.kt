@@ -66,7 +66,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -86,6 +85,7 @@ class WheelPickerInstrumentedTest {
     var expectedMainAxisPx = 0
     var expectedCrossAxisPx = 0
     val tightState = WheelPickerState(initialIndex = 2)
+    var scene by mutableStateOf(0)
 
     composeRule.setContent {
       val density = LocalDensity.current
@@ -94,54 +94,60 @@ class WheelPickerInstrumentedTest {
       expectedMainAxisPx = with(density) { itemSizeDp.roundToPx() * 5 }
       expectedCrossAxisPx = with(density) { crossAxisDp.roundToPx() }
 
-      Column {
-        Box(
-          modifier = Modifier
-            .width(IntrinsicSize.Min)
-            .height(IntrinsicSize.Max)
-            .onSizeChanged { verticalMeasuredSize = it },
-        ) {
-          VerticalWheelPicker(
-            count = { 20 },
-            itemHeight = itemSizeDp,
-            unfocusedCount = 2,
-            focus = {
-              Box(modifier = Modifier.width(crossAxisDp))
-            },
-          ) { index ->
-            BasicText(text = "V-$index")
+      when (scene) {
+        0 -> {
+          Box(
+            modifier = Modifier
+              .width(IntrinsicSize.Min)
+              .height(IntrinsicSize.Max)
+              .onSizeChanged { verticalMeasuredSize = it },
+          ) {
+            VerticalWheelPicker(
+              count = { 20 },
+              itemHeight = itemSizeDp,
+              unfocusedCount = 2,
+              focus = {
+                Box(modifier = Modifier.width(crossAxisDp))
+              },
+            ) { index ->
+              BasicText(text = "V-$index")
+            }
           }
         }
 
-        Box(
-          modifier = Modifier
-            .width(IntrinsicSize.Max)
-            .height(IntrinsicSize.Min)
-            .onSizeChanged { horizontalMeasuredSize = it },
-        ) {
-          HorizontalWheelPicker(
-            count = { 20 },
-            itemWidth = itemSizeDp,
-            unfocusedCount = 2,
-            focus = {
-              Box(modifier = Modifier.height(crossAxisDp))
-            },
-          ) { index ->
-            BasicText(text = "H-$index")
+        1 -> {
+          Box(
+            modifier = Modifier
+              .width(IntrinsicSize.Max)
+              .height(IntrinsicSize.Min)
+              .onSizeChanged { horizontalMeasuredSize = it },
+          ) {
+            HorizontalWheelPicker(
+              count = { 20 },
+              itemWidth = itemSizeDp,
+              unfocusedCount = 2,
+              focus = {
+                Box(modifier = Modifier.height(crossAxisDp))
+              },
+            ) { index ->
+              BasicText(text = "H-$index")
+            }
           }
         }
 
-        Box(modifier = Modifier.size(width = 60.dp, height = 24.dp)) {
-          VerticalWheelPicker(
-            count = { 10 },
-            state = tightState,
-            itemHeight = 48.dp,
-            unfocusedCount = 2,
-            focus = {
-              Box(modifier = Modifier.size(width = 120.dp, height = 48.dp))
-            },
-          ) { index ->
-            BasicText(text = "T-$index")
+        else -> {
+          Box(modifier = Modifier.size(width = 60.dp, height = 24.dp)) {
+            VerticalWheelPicker(
+              count = { 10 },
+              state = tightState,
+              itemHeight = 48.dp,
+              unfocusedCount = 2,
+              focus = {
+                Box(modifier = Modifier.size(width = 120.dp, height = 48.dp))
+              },
+            ) { index ->
+              BasicText(text = "T-$index")
+            }
           }
         }
       }
@@ -150,8 +156,18 @@ class WheelPickerInstrumentedTest {
     composeRule.waitForIdle()
     assertEquals(expectedCrossAxisPx, verticalMeasuredSize.width)
     assertEquals(expectedMainAxisPx, verticalMeasuredSize.height)
+
+    composeRule.runOnUiThread {
+      scene = 1
+    }
+    composeRule.waitForIdle()
     assertEquals(expectedMainAxisPx, horizontalMeasuredSize.width)
     assertEquals(expectedCrossAxisPx, horizontalMeasuredSize.height)
+
+    composeRule.runOnUiThread {
+      scene = 2
+    }
+    composeRule.waitForIdle()
     assertEquals(2, tightState.snappedIndex)
     assertEquals(0f, tightState.scrollPercentageOf(2))
   }
@@ -375,81 +391,92 @@ class WheelPickerInstrumentedTest {
       return
     }
     val tightState = WheelPickerState(initialIndex = 2)
+    var scene by mutableStateOf(0)
 
     composeRule.setContent {
-      Column {
-        Box(
-          modifier = Modifier
-            .testTag("tightClipHost")
-            .size(width = 160.dp, height = 80.dp)
-            .background(Color.White),
-          contentAlignment = Alignment.Center,
-        ) {
-          VerticalWheelPicker(
+      when (scene) {
+        0 -> {
+          Box(
             modifier = Modifier
-              .testTag("tightClipWheel")
-              .size(width = 60.dp, height = 24.dp),
-            count = { 10 },
-            state = tightState,
-            itemHeight = 48.dp,
-            unfocusedCount = 2,
-            focus = {
-              Box(
-                modifier = Modifier.size(width = 120.dp, height = 48.dp),
-                contentAlignment = Alignment.Center,
-              ) {
-                Box(
-                  modifier = Modifier
-                    .requiredWidth(120.dp)
-                    .height(8.dp)
-                    .background(Color.Blue),
-                )
-              }
-            },
-            display = { index ->
-              Content(index)
-            },
-          ) { _ ->
-            Box(
+              .testTag("tightClipHost")
+              .size(width = 160.dp, height = 80.dp)
+              .background(Color.White),
+            contentAlignment = Alignment.Center,
+          ) {
+            VerticalWheelPicker(
               modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .background(Color.Red),
+                .testTag("tightClipWheel")
+                .size(width = 60.dp, height = 24.dp),
+              count = { 10 },
+              state = tightState,
+              itemHeight = 48.dp,
+              unfocusedCount = 2,
+              focus = {
+                Box(
+                  modifier = Modifier.size(width = 120.dp, height = 48.dp),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Box(
+                    modifier = Modifier
+                      .requiredWidth(120.dp)
+                      .height(8.dp)
+                      .background(Color.Blue),
+                  )
+                }
+              },
+              display = { index ->
+                Content(index)
+              },
+            ) { _ ->
+              Box(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(48.dp)
+                  .background(Color.Red),
+              )
+            }
+          }
+        }
+
+        1 -> {
+          Box(
+            modifier = Modifier
+              .size(width = 80.dp, height = 40.dp)
+              .background(Color.Green),
+          ) {
+            WheelPickerFocusHorizontal(
+              modifier = Modifier.testTag("focusHorizontalPixels"),
+              thickness = Dp.Hairline,
+              color = Color.Red,
             )
           }
         }
 
-        Box(
-          modifier = Modifier
-            .size(width = 80.dp, height = 40.dp)
-            .background(Color.Green),
-        ) {
-          WheelPickerFocusHorizontal(
-            modifier = Modifier.testTag("focusHorizontalPixels"),
-            thickness = Dp.Hairline,
-          )
+        2 -> {
+          Box(
+            modifier = Modifier
+              .size(width = 80.dp, height = 40.dp)
+              .background(Color.Green),
+          ) {
+            WheelPickerFocusVertical(
+              modifier = Modifier.testTag("focusVerticalPixels"),
+              thickness = Dp.Hairline,
+              color = Color.Red,
+            )
+          }
         }
 
-        Box(
-          modifier = Modifier
-            .size(width = 80.dp, height = 40.dp)
-            .background(Color.Green),
-        ) {
-          WheelPickerFocusVertical(
-            modifier = Modifier.testTag("focusVerticalPixels"),
-            thickness = Dp.Hairline,
-          )
-        }
-
-        Box(
-          modifier = Modifier
-            .size(width = 80.dp, height = 40.dp)
-            .background(Color.Green),
-        ) {
-          WheelPickerFocusVertical(
-            modifier = Modifier.testTag("focusTransparentPixels"),
-            color = Color.Transparent,
-          )
+        else -> {
+          Box(
+            modifier = Modifier
+              .size(width = 80.dp, height = 40.dp)
+              .background(Color.Green),
+          ) {
+            WheelPickerFocusVertical(
+              modifier = Modifier.testTag("focusTransparentPixels"),
+              color = Color.Transparent,
+            )
+          }
         }
       }
     }
@@ -491,34 +518,60 @@ class WheelPickerInstrumentedTest {
     assertTrue("Expected red item pixels inside tight viewport", hasRedInside)
     assertTrue("Expected blue focus pixels inside tight viewport", hasBlueInside)
 
+    composeRule.runOnUiThread {
+      scene = 1
+    }
+    composeRule.waitForIdle()
     val horizontalPixels = composeRule.onNodeWithTag("focusHorizontalPixels").captureToImage().toPixelMap()
-    val sampleY = horizontalPixels.height / 2
-    val horizontalBg = horizontalPixels[horizontalPixels.width / 2, sampleY]
+    val horizontalBg = horizontalPixels[horizontalPixels.width / 2, horizontalPixels.height / 2]
     assertTrue(
       "Expected green background in horizontal focus center, actual=$horizontalBg",
       horizontalBg.green > 0.9f && horizontalBg.red < 0.1f && horizontalBg.blue < 0.1f,
     )
-    assertNotEquals(horizontalBg, horizontalPixels[0, sampleY])
-    assertNotEquals(horizontalBg, horizontalPixels[horizontalPixels.width - 1, sampleY])
-    assertEquals(horizontalPixels[0, sampleY], horizontalPixels[horizontalPixels.width - 1, sampleY])
-    for (x in 1 until horizontalPixels.width - 1) {
-      assertEquals("Expected untouched background at x=$x", horizontalBg, horizontalPixels[x, sampleY])
+    val horizontalEdge = horizontalPixels[0, 0]
+    assertTrue(
+      "Expected red divider on horizontal focus edge, actual=$horizontalEdge",
+      horizontalEdge.red > 0.8f && horizontalEdge.green < 0.2f && horizontalEdge.blue < 0.2f,
+    )
+    for (y in 0 until horizontalPixels.height) {
+      for (x in 0 until horizontalPixels.width) {
+        if (x == 0 || x == horizontalPixels.width - 1) {
+          assertEquals("Expected continuous horizontal divider pixel at ($x, $y)", horizontalEdge, horizontalPixels[x, y])
+        } else {
+          assertEquals("Expected untouched background pixel at ($x, $y)", horizontalBg, horizontalPixels[x, y])
+        }
+      }
     }
 
+    composeRule.runOnUiThread {
+      scene = 2
+    }
+    composeRule.waitForIdle()
     val verticalPixels = composeRule.onNodeWithTag("focusVerticalPixels").captureToImage().toPixelMap()
-    val sampleX = verticalPixels.width / 2
-    val verticalBg = verticalPixels[sampleX, verticalPixels.height / 2]
+    val verticalBg = verticalPixels[verticalPixels.width / 2, verticalPixels.height / 2]
     assertTrue(
       "Expected green background in vertical focus center, actual=$verticalBg",
       verticalBg.green > 0.9f && verticalBg.red < 0.1f && verticalBg.blue < 0.1f,
     )
-    assertNotEquals(verticalBg, verticalPixels[sampleX, 0])
-    assertNotEquals(verticalBg, verticalPixels[sampleX, verticalPixels.height - 1])
-    assertEquals(verticalPixels[sampleX, 0], verticalPixels[sampleX, verticalPixels.height - 1])
-    for (y in 1 until verticalPixels.height - 1) {
-      assertEquals("Expected untouched background at y=$y", verticalBg, verticalPixels[sampleX, y])
+    val verticalEdge = verticalPixels[0, 0]
+    assertTrue(
+      "Expected red divider on vertical focus edge, actual=$verticalEdge",
+      verticalEdge.red > 0.8f && verticalEdge.green < 0.2f && verticalEdge.blue < 0.2f,
+    )
+    for (y in 0 until verticalPixels.height) {
+      for (x in 0 until verticalPixels.width) {
+        if (y == 0 || y == verticalPixels.height - 1) {
+          assertEquals("Expected continuous vertical divider pixel at ($x, $y)", verticalEdge, verticalPixels[x, y])
+        } else {
+          assertEquals("Expected untouched background pixel at ($x, $y)", verticalBg, verticalPixels[x, y])
+        }
+      }
     }
 
+    composeRule.runOnUiThread {
+      scene = 3
+    }
+    composeRule.waitForIdle()
     val transparentPixels = composeRule.onNodeWithTag("focusTransparentPixels").captureToImage().toPixelMap()
     val transparentBg = transparentPixels[transparentPixels.width / 2, transparentPixels.height / 2]
     assertTrue(
@@ -800,20 +853,26 @@ class WheelPickerInstrumentedTest {
     assertEquals(8, verticalState.snappedIndex)
     assertEquals(8, horizontalState.snappedIndex)
 
-    // 同一次主线程回调中将 12 项缩容至 1 项并立即 launch scrollToIndex(0)，重测不越界且跳转返回当下已完成吸附结算
+    // 同一次主线程回调中将 12 项缩容至 1 项并以 UNDISPATCHED 在重组前立即执行 scrollToIndex(0)，重测不越界且跳转返回当下已完成吸附结算
+    var verticalJumpCompleted = false
+    var horizontalJumpCompleted = false
     composeRule.runOnUiThread {
       stateList.removeRange(1, 12)
-      composeScope.launch {
+      composeScope.launch(start = CoroutineStart.UNDISPATCHED) {
         verticalState.scrollToIndex(0)
         snappedRightAfterVerticalJump = verticalState.snappedIndex
+        verticalJumpCompleted = true
       }
 
       boxedItems = listOf("BoxedItem-0")
-      composeScope.launch {
+      composeScope.launch(start = CoroutineStart.UNDISPATCHED) {
         horizontalState.scrollToIndex(0)
         snappedRightAfterHorizontalJump = horizontalState.snappedIndex
+        horizontalJumpCompleted = true
       }
     }
+    assertTrue("Expected vertical scrollToIndex(0) to execute synchronously before recomposition", verticalJumpCompleted)
+    assertTrue("Expected horizontal scrollToIndex(0) to execute synchronously before recomposition", horizontalJumpCompleted)
 
     composeRule.waitForIdle()
     assertEquals(0, snappedRightAfterVerticalJump)
@@ -869,22 +928,28 @@ class WheelPickerInstrumentedTest {
     assertEquals(0, verticalState.snappedIndex)
     assertEquals(0, horizontalState.snappedIndex)
 
-    // 同一次主线程回调中将 1 项扩容至 6 项并立即在重组前调用 scrollToIndex(5)，key 与 content 读取同一状态不越界
+    // 同一次主线程回调中将 1 项扩容至 6 项并以 UNDISPATCHED 在重组前立即调用 scrollToIndex(5)，key 与 content 读取同一状态不越界
+    var verticalJumpCompleted = false
+    var horizontalJumpCompleted = false
     composeRule.runOnUiThread {
       for (index in 1..5) {
         stateList.add("StateItem-$index")
       }
-      composeScope.launch {
+      composeScope.launch(start = CoroutineStart.UNDISPATCHED) {
         verticalState.scrollToIndex(5)
         snappedRightAfterVerticalJump = verticalState.snappedIndex
+        verticalJumpCompleted = true
       }
 
       boxedItems = (0..5).map { "BoxedItem-$it" }
-      composeScope.launch {
+      composeScope.launch(start = CoroutineStart.UNDISPATCHED) {
         horizontalState.scrollToIndex(5)
         snappedRightAfterHorizontalJump = horizontalState.snappedIndex
+        horizontalJumpCompleted = true
       }
     }
+    assertTrue("Expected vertical scrollToIndex(5) to execute synchronously before recomposition", verticalJumpCompleted)
+    assertTrue("Expected horizontal scrollToIndex(5) to execute synchronously before recomposition", horizontalJumpCompleted)
 
     composeRule.waitForIdle()
     assertEquals(5, snappedRightAfterVerticalJump)
@@ -903,20 +968,22 @@ class WheelPickerInstrumentedTest {
     composeRule.onNodeWithText("BoxedItem-5").assertIsDisplayed()
     composeRule.onNodeWithText("BoxedItem-5").assertIsSelected()
 
-    // 再次在重组前从 6 项扩容至 12 项并立即调用 animateScrollToIndex(11)，动画正常落地至新末项
+    // 再次以 UNDISPATCHED 在重组前从 6 项扩容至 12 项并立即启动 animateScrollToIndex(11)，动画正常落地至新末项
     composeRule.runOnUiThread {
       for (index in 6..11) {
         stateList.add("StateItem-$index")
       }
-      composeScope.launch {
+      composeScope.launch(start = CoroutineStart.UNDISPATCHED) {
         verticalState.animateScrollToIndex(11)
       }
 
       boxedItems = (0..11).map { "BoxedItem-$it" }
-      composeScope.launch {
+      composeScope.launch(start = CoroutineStart.UNDISPATCHED) {
         horizontalState.animateScrollToIndex(11)
       }
     }
+    assertTrue("Expected vertical animateScrollToIndex(11) to start before recomposition", verticalState.isScrollInProgress)
+    assertTrue("Expected horizontal animateScrollToIndex(11) to start before recomposition", horizontalState.isScrollInProgress)
 
     composeRule.waitForIdle()
     assertEquals(11, verticalState.snappedIndex)
