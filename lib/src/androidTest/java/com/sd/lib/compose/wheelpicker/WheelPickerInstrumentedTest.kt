@@ -515,6 +515,76 @@ class WheelPickerInstrumentedTest {
   }
 
   @Test
+  fun testTailShrinkWithSubHalfItemDragCentersNewLastItem() {
+    val items = mutableStateListOf("Item-0", "Item-1", "Item-2", "Item-3", "Item-4")
+    val state = WheelPickerState(initialIndex = 2)
+    var itemHeightPx = 0f
+    var touchSlopPx = 0f
+
+    composeRule.setContent {
+      val density = LocalDensity.current
+      val viewConfig = LocalViewConfiguration.current
+      itemHeightPx = with(density) { 48.dp.roundToPx().toFloat() }
+      touchSlopPx = viewConfig.touchSlop
+
+      VerticalWheelPicker(
+        modifier = Modifier.testTag("tailShrinkWheel"),
+        count = { items.size },
+        state = state,
+        key = { items[it] },
+        itemHeight = 48.dp,
+        unfocusedCount = 2,
+      ) { index ->
+        BasicText(text = items[index])
+      }
+    }
+
+    composeRule.waitForIdle()
+    assertEquals(2, state.snappedIndex)
+    assertEquals(0f, state.scrollPercentageOf(2))
+    composeRule.onNodeWithText("Item-2").assertIsSelected()
+
+    // 向上拖动不到半格产生正像素偏移时删除尾项使 Item-2 成为新末项，重测立即回拉归零且松手后保持居中选中
+    composeRule.onNodeWithTag("tailShrinkWheel").performTouchInput {
+      down(center)
+      moveBy(Offset(0f, -(touchSlopPx + itemHeightPx * 0.3f)))
+    }
+    composeRule.waitForIdle()
+    val midDragPercentage = state.scrollPercentageOf(2)!!
+    assertEquals(2, state.currentIndex)
+    assertTrue("Expected non-zero sub-half-item drag offset, actual=$midDragPercentage", midDragPercentage < -0.02f)
+
+    composeRule.runOnUiThread {
+      items.removeAt(4)
+      items.removeAt(3)
+    }
+    composeRule.waitForIdle()
+    assertEquals(0f, state.scrollPercentageOf(2)!!, 0.0001f)
+
+    composeRule.onNodeWithTag("tailShrinkWheel").performTouchInput {
+      up()
+    }
+    composeRule.waitForIdle()
+
+    assertEquals(2, state.currentIndex)
+    assertEquals(2, state.snappedIndex)
+    assertEquals("Item-2", items[state.snappedIndex])
+    assertEquals(0f, state.scrollPercentageOf(2)!!, 0.0001f)
+    composeRule.onNodeWithText("Item-1").assertIsNotSelected()
+    composeRule.onNodeWithText("Item-2").assertIsDisplayed()
+    composeRule.onNodeWithText("Item-2").assertIsSelected()
+    val wheelNode = composeRule.onNodeWithTag("tailShrinkWheel").fetchSemanticsNode()
+    val itemNode = composeRule.onNodeWithText("Item-2").fetchSemanticsNode()
+    assertWheelItemCenteredVisibleAndSelected(
+      wheelNode = wheelNode,
+      itemNode = itemNode,
+      orientation = WheelOrientation.Vertical,
+      expectedItemSizePx = itemHeightPx,
+      phase = "tailShrinkSettled",
+    )
+  }
+
+  @Test
   fun testShrinkAndImmediateScrollToIndexBeforeRecompositionDoesNotCrash() {
     val stateList = mutableStateListOf<String>().also { list ->
       repeat(12) { list.add("StateItem-$it") }

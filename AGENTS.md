@@ -110,4 +110,4 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 | 测试类 | 覆盖范围 |
 |---|---|
 | `WheelPickerTest` | 有限空间下 `unfocusedCount` 自动缩小、列表按当次主轴约束计算内边距、`snappedIndex` 与视觉偏移比例计算、挂载/卸载/空列表过渡与 `Saver`、未挂载与首次测量前预跳转、并发抢占与异常后状态自愈、重复取消后自动吸附自愈、`onPreFling` 挂起保护、缩容夹紧与稳定 `key` 保持、重组前改表跳转同步、公开状态与观察流不抢跑求值 `count`、常规 `key` 增删重排同步 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`LookaheadScope` + `animateBounds` 展开与收缩途中跳转保持末项居中与选中、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与头删缩容稳定 `key` 保持、重组前缩容或扩容立即跳转不越界、条件渲染卸载安全与空态回填恢复、重挂载跳转、条目选中无障碍语义更新 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束裁剪、`LookaheadScope` + `animateBounds` 展开与收缩途中跳转保持末项居中与选中、`ModalBottomSheet` 多帧 `onPreFling` 嵌套滚动及触摸取消安全、手势中途打断动画及后续头插保持、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与首尾缩容稳定 `key` 居中保持、重组前缩容或扩容立即跳转不越界、条件渲染卸载安全与空态回填恢复、重挂载跳转、条目选中无障碍语义更新 |

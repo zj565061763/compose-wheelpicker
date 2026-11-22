@@ -188,12 +188,13 @@ class WheelPickerTest {
     assertEquals(7, state.snappedIndex)
     assertEquals(0f, state.scrollPercentageOf(7)!!, 0.0001f)
 
-    // 新组件接管后，旧组件销毁不应清空新组件状态
+    // 旧组件卸载后挂载新组件，恢复最近选中索引并限制在新条目数边界内
+    state.detach(ownerA)
+    assertEquals(-1, state.currentIndex)
+    assertEquals(-1, state.snappedIndex)
+
     val ownerB = Any()
     state.updateAttachment(owner = ownerB, count = 5, unfocusedCount = 2, itemSizePx = 48)
-    assertEquals(4, state.currentIndex)
-    assertEquals(4, state.snappedIndex)
-    state.detach(ownerA)
     assertEquals(4, state.currentIndex)
     assertEquals(4, state.snappedIndex)
 
@@ -258,57 +259,74 @@ class WheelPickerTest {
   @Test
   fun testOwnerSwitchWithSameParamsTriggersObserveSnapshot() {
     runBlocking {
-      val state = WheelPickerState(initialIndex = 3)
-      val ownerA = Any()
-      val ownerB = Any()
+      withTimeout(5.seconds) {
+        val state = WheelPickerState(initialIndex = 3)
+        val ownerA = Any()
+        val ownerB = Any()
 
-      state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        val jobA = launch(start = CoroutineStart.UNDISPATCHED) {
+          state.observeSnappedIndex(ownerA)
+        }
+        Snapshot.withMutableSnapshot {
+          state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        }
+        yield()
+        assertEquals(3, state.snappedIndex)
 
-      val jobB = launch(start = CoroutineStart.UNDISPATCHED) {
-        state.observeSnappedIndex(ownerB)
+        Snapshot.withMutableSnapshot {
+          state.detach(ownerA)
+        }
+        jobA.cancel()
+
+        val jobB = launch(start = CoroutineStart.UNDISPATCHED) {
+          state.observeSnappedIndex(ownerB)
+        }
+        jobA.join()
+        assertEquals(-1, state.snappedIndex)
+
+        Snapshot.withMutableSnapshot {
+          state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        }
+        yield()
+        assertEquals(3, state.snappedIndex)
+
+        Snapshot.withMutableSnapshot {
+          state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
+        }
+        yield()
+        assertEquals(-1, state.snappedIndex)
+
+        Snapshot.withMutableSnapshot {
+          state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        }
+        yield()
+        assertEquals(3, state.snappedIndex)
+
+        jobB.cancel()
+        jobB.join()
+
+        // 飞行动画期间旧组件卸载并挂载新组件时，结束旧动画并将待跳转目标限制在新组件边界
+        val controller = FakeWheelScrollController(initialIndex = 1).apply {
+          pauseAnimations = true
+        }
+        val handoffState = WheelPickerState(initialIndex = 1, scrollController = controller)
+        val ownerC = Any()
+        val ownerD = Any()
+        handoffState.updateAttachment(owner = ownerC, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 10)
+
+        val inFlightJob = launch(start = CoroutineStart.UNDISPATCHED) {
+          handoffState.animateScrollToIndex(8)
+        }
+        assertTrue(handoffState.isScrollInProgress)
+
+        handoffState.detach(ownerC)
+        inFlightJob.join()
+        assertFalse(inFlightJob.isCancelled)
+        handoffState.updateAttachment(owner = ownerD, count = 5, unfocusedCount = 2, itemSizePx = 48)
+        assertEquals(4, handoffState.currentIndex)
+        assertEquals(4, handoffState.snappedIndex)
       }
-
-      Snapshot.withMutableSnapshot {
-        state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      }
-      yield()
-      assertEquals(3, state.snappedIndex)
-
-      Snapshot.withMutableSnapshot {
-        state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
-      }
-      yield()
-      assertEquals(-1, state.snappedIndex)
-
-      Snapshot.withMutableSnapshot {
-        state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      }
-      yield()
-      assertEquals(3, state.snappedIndex)
-
-      jobB.cancel()
-
-      // 飞行动画期间旧组件卸载并挂载新组件时，结束旧动画并将待跳转目标限制在新组件边界
-      val controller = FakeWheelScrollController(initialIndex = 1).apply {
-        pauseAnimations = true
-      }
-      val handoffState = WheelPickerState(initialIndex = 1, scrollController = controller)
-      val ownerC = Any()
-      val ownerD = Any()
-      handoffState.updateAttachment(owner = ownerC, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 10)
-
-      val inFlightJob = launch(start = CoroutineStart.UNDISPATCHED) {
-        handoffState.animateScrollToIndex(8)
-      }
-      assertTrue(handoffState.isScrollInProgress)
-
-      handoffState.detach(ownerC)
-      inFlightJob.join()
-      assertFalse(inFlightJob.isCancelled)
-      handoffState.updateAttachment(owner = ownerD, count = 5, unfocusedCount = 2, itemSizePx = 48)
-      assertEquals(4, handoffState.currentIndex)
-      assertEquals(4, handoffState.snappedIndex)
     }
   }
 
@@ -387,60 +405,62 @@ class WheelPickerTest {
   @Test
   fun testTargetIndexPreservedAcrossEmptyListRemeasureAndTransitions() {
     runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 0)
-      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-      val ownerA = Any()
+      withTimeout(5.seconds) {
+        val controller = FakeWheelScrollController(initialIndex = 0)
+        val state = WheelPickerState(initialIndex = 0, scrollController = controller)
+        val ownerA = Any()
 
-      state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 10)
-      assertEquals(0, state.snappedIndex)
+        state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 10)
+        assertEquals(0, state.snappedIndex)
 
-      // 场景 A：count 变为 0 -> 调用 scrollToIndex(8) -> 空列表重测量重置位置为 0 -> 恢复 10 条数据
-      state.updateAttachment(owner = ownerA, count = 0, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 0)
-      state.scrollToIndex(8)
-      controller.applyMeasure(count = 0)
-      assertEquals(0, controller.firstVisibleItemIndex)
+        // 场景 A：count 变为 0 -> 调用 scrollToIndex(8) -> 空列表重测量重置位置为 0 -> 恢复 10 条数据
+        state.updateAttachment(owner = ownerA, count = 0, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 0)
+        state.scrollToIndex(8)
+        controller.applyMeasure(count = 0)
+        assertEquals(0, controller.firstVisibleItemIndex)
 
-      state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 10)
-      assertEquals(8, controller.firstVisibleItemIndex)
-      assertEquals(8, state.currentIndex)
-      assertEquals(8, state.snappedIndex)
+        state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 10)
+        assertEquals(8, controller.firstVisibleItemIndex)
+        assertEquals(8, state.currentIndex)
+        assertEquals(8, state.snappedIndex)
 
-      // 场景 B：发起 animateScrollToIndex(6) 后重组为 count = 0 并重测量 -> 恢复 10 条数据时仍落在 6
-      state.scrollToIndex(2)
-      assertEquals(2, state.snappedIndex)
+        // 场景 B：发起 animateScrollToIndex(6) 后重组为 count = 0 并重测量 -> 恢复 10 条数据时仍落在 6
+        state.scrollToIndex(2)
+        assertEquals(2, state.snappedIndex)
 
-      controller.pauseAnimations = true
-      val animJob = launch(start = CoroutineStart.UNDISPATCHED) {
-        state.animateScrollToIndex(6)
+        controller.pauseAnimations = true
+        val animJob = launch(start = CoroutineStart.UNDISPATCHED) {
+          state.animateScrollToIndex(6)
+        }
+        state.updateAttachment(owner = ownerA, count = 0, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 0)
+        animJob.join()
+        assertEquals(0, controller.firstVisibleItemIndex)
+
+        state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 10)
+        assertEquals(6, controller.firstVisibleItemIndex)
+        assertEquals(6, state.currentIndex)
+        assertEquals(6, state.snappedIndex)
+
+        // 场景 C：组件卸载期间调用 scrollToIndex(9)，随后新组件先以 count = 0 挂载并重测量，再加载 10 条数据
+        state.detach(ownerA)
+        state.scrollToIndex(9)
+
+        val ownerB = Any()
+        state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 0)
+        assertEquals(0, controller.firstVisibleItemIndex)
+
+        state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        controller.applyMeasure(count = 10)
+        assertEquals(9, controller.firstVisibleItemIndex)
+        assertEquals(9, state.currentIndex)
+        assertEquals(9, state.snappedIndex)
       }
-      state.updateAttachment(owner = ownerA, count = 0, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 0)
-      animJob.join()
-      assertEquals(0, controller.firstVisibleItemIndex)
-
-      state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 10)
-      assertEquals(6, controller.firstVisibleItemIndex)
-      assertEquals(6, state.currentIndex)
-      assertEquals(6, state.snappedIndex)
-
-      // 场景 C：组件卸载期间调用 scrollToIndex(9)，随后新组件先以 count = 0 挂载并重测量，再加载 10 条数据
-      state.detach(ownerA)
-      state.scrollToIndex(9)
-
-      val ownerB = Any()
-      state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 0)
-      assertEquals(0, controller.firstVisibleItemIndex)
-
-      state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-      controller.applyMeasure(count = 10)
-      assertEquals(9, controller.firstVisibleItemIndex)
-      assertEquals(9, state.currentIndex)
-      assertEquals(9, state.snappedIndex)
     }
   }
 
