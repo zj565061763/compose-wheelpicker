@@ -631,7 +631,7 @@ class WheelPickerInstrumentedTest {
     }
     composeRule.waitForIdle()
 
-    // 2. 卸载隐藏期间重排列表并调用 scrollToIndex，重新挂载后按新索引定位且不受残留旧 key 影响
+    // 2. 卸载隐藏期间重排列表并以 UNDISPATCHED 调用 scrollToIndex，重新挂载后覆盖旧索引且不受残留旧 key 影响
     composeRule.runOnUiThread {
       mainScope.launch {
         state.scrollToIndex(2)
@@ -646,17 +646,24 @@ class WheelPickerInstrumentedTest {
     composeRule.waitForIdle()
     assertEquals(-1, state.snappedIndex)
 
+    var remountJumpCompleted = false
+    var snappedWhileDetached = 99
     composeRule.runOnUiThread {
       stateList.clear()
       stateList.addAll(listOf("C", "A", "B") + (0..26).map { "Item-$it" })
-      mainScope.launch {
-        state.scrollToIndex(2)
+      mainScope.launch(start = CoroutineStart.UNDISPATCHED) {
+        state.scrollToIndex(1)
+        snappedWhileDetached = state.snappedIndex
+        remountJumpCompleted = true
       }
       visible = true
     }
+    assertTrue("Expected scrollToIndex(1) to complete synchronously while detached", remountJumpCompleted)
+    assertEquals(-1, snappedWhileDetached)
+
     composeRule.waitForIdle()
-    assertEquals(2, state.snappedIndex)
-    assertEquals("B", stateList[state.snappedIndex])
+    assertEquals(1, state.snappedIndex)
+    assertEquals("A", stateList[state.snappedIndex])
   }
 
   @Test

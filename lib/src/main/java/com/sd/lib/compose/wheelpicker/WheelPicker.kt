@@ -144,16 +144,16 @@ private fun WheelPicker(
   val latestCountState = rememberUpdatedState(count)
   val latestKeyState = rememberUpdatedState(key)
   val resolvedCountState = remember {
-    derivedStateOf {
-      val value = latestCountState.value()
+    derivedStateOf { latestCountState.value() }
+  }
+  val countProvider: () -> Int = remember(resolvedCountState) {
+    {
+      val value = resolvedCountState.value
       require(value >= 0) { "require count >= 0, but was $value" }
       value
     }
   }
-  val resolvedCount = resolvedCountState.value
-  val countProvider: () -> Int = remember(resolvedCountState) {
-    { resolvedCountState.value }
-  }
+  val resolvedCount = countProvider()
 
   val owner = remember(state) { WheelOwner() }
   val density = LocalDensity.current
@@ -229,13 +229,13 @@ private fun WheelPicker(
   }
   val lazyListContent: LazyListScope.() -> Unit = remember(
     state,
-    resolvedCountState,
+    countProvider,
     latestKeyState,
     itemModifier,
     displayHolder,
   ) {
     {
-      val itemCount = resolvedCountState.value
+      val itemCount = countProvider()
       if (itemCount > 0) {
         items(
           count = itemCount,

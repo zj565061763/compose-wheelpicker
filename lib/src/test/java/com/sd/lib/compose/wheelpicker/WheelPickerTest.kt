@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.RulerScope
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -63,6 +64,40 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class WheelPickerTest {
+  @Test
+  fun testInvalidWheelPickerParametersThrowIllegalArgumentException() {
+    runBlocking {
+      val clock = BroadcastFrameClock()
+      val recomposer = Recomposer(coroutineContext + clock)
+      try {
+        for (invalidSize in listOf(0.dp, (-1).dp, Dp.Unspecified, Dp.Infinity)) {
+          assertCompositionThrowsIllegalArgument(recomposer) {
+            VerticalWheelPicker(count = { 1 }, itemHeight = invalidSize) { }
+          }
+          assertCompositionThrowsIllegalArgument(recomposer) {
+            HorizontalWheelPicker(count = { 1 }, itemWidth = invalidSize) { }
+          }
+        }
+
+        assertCompositionThrowsIllegalArgument(recomposer) {
+          VerticalWheelPicker(count = { 1 }, unfocusedCount = -1) { }
+        }
+        assertCompositionThrowsIllegalArgument(recomposer) {
+          HorizontalWheelPicker(count = { 1 }, unfocusedCount = -1) { }
+        }
+
+        assertCompositionThrowsIllegalArgument(recomposer) {
+          VerticalWheelPicker(count = { -1 }) { }
+        }
+        assertCompositionThrowsIllegalArgument(recomposer) {
+          HorizontalWheelPicker(count = { -1 }) { }
+        }
+      } finally {
+        recomposer.cancel()
+      }
+    }
+  }
+
   @Test
   fun testCalculateSafeUnfocusedCount() {
     assertEquals(
@@ -1661,16 +1696,16 @@ private class WheelCompositionHarness(
     val latestKeyState = rememberUpdatedState(key)
     val latestRenderState = rememberUpdatedState(onRenderItem)
     val resolvedCountState = remember {
-      derivedStateOf {
-        val value = latestCountState.value()
+      derivedStateOf { latestCountState.value() }
+    }
+    val countProvider: () -> Int = remember(resolvedCountState) {
+      {
+        val value = resolvedCountState.value
         require(value >= 0) { "require count >= 0, but was $value" }
         value
       }
     }
-    val resolvedCount = resolvedCountState.value
-    val countProvider: () -> Int = remember(resolvedCountState) {
-      { resolvedCountState.value }
-    }
+    val resolvedCount = countProvider()
     rememberWheelPickerDisplayHolder(
       state = state,
       display = { },
@@ -1681,7 +1716,7 @@ private class WheelCompositionHarness(
       _latestCount = resolvedCount
       _latestKey = latestKeyState.value
       controller.liveMeasureSpec = {
-        Triple(resolvedCountState.value, latestKeyState.value, latestRenderState.value)
+        Triple(countProvider(), latestKeyState.value, latestRenderState.value)
       }
       state.updateAttachment(
         owner = owner,
@@ -2149,4 +2184,20 @@ private class FakeMeasureScope(
       }
     }
   }
+}
+
+private fun assertCompositionThrowsIllegalArgument(
+  recomposer: Recomposer,
+  content: @Composable () -> Unit,
+) {
+  val composition = Composition(EmptyApplier(), recomposer)
+  var thrown = false
+  try {
+    composition.setContent(content)
+  } catch (_: IllegalArgumentException) {
+    thrown = true
+  } finally {
+    composition.dispose()
+  }
+  assertTrue("Expected IllegalArgumentException to be thrown", thrown)
 }
