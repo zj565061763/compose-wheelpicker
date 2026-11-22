@@ -79,6 +79,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不兜底混用实时 `count` 与旧列表快照的越界：与官方 `Pager` 一致，同帧更新数据并在重组前立即跳转时，调用方需在 `count`、`key` 与 `content` 的 lambda 内读取同一列表状态，库层不为混用实时条目数与重组期捕获的不可变列表导致的越界提供兜底。
 - 不兜底或额外说明非可观察的 `count` 数据源：与官方 `LazyColumn` 及 `rememberPagerState` 一致，动态数据使用 Compose 可观察状态属通用前提，既不为直接裸读 `StateFlow.value` 或普通可变集合等非可观察数据源增加兜底，也不在 `count` 的公开 KDoc 中额外说明该前提。
 - 不支持单个 `WheelPickerState` 同时挂载多个滚轮实例：与官方 `LazyListState` 及 `PagerState` 一致，仅支持单实例挂载与常规 `if / else` 条件分支顺序切换，不为 `AnimatedContent`、`Crossfade` 等过渡期新旧实例并存共享同一 `state` 做多实例状态转存或协同。
+- 不在动画飞行途中切换滚轮实例时吞掉取消异常：与官方 `LazyListState` 及 `PagerState` 在滚动中被 `requestScrollToItem` / `requestScrollToPage` 打断时一致，动画进行中切换为另一个共用同一 `state` 的滚轮实例时，旧动画因组件切换中断并抛出 `CancellationException`，不引入挂载会话机制伪造正常完成。
 - 不提供按 `key` 跳转 API：不提供 `scrollToKey` / `animateScrollToKey`，调用方需自行在数据源查找索引后调用 `scrollToIndex` / `animateScrollToIndex`。
 - 不做跨窗口重排追踪：不在状态层维护独立 `key` 缓存、全表扫描或快照探测（如 `keyProbeIndex`），单次重排跨度超出 `LazyList` 原生最近邻窗口（约 ±100 项）时按原索引位置回退。
 - 不支持逐项独立 `MutableState` 暗中突变：不支持在稳定 `key` 闭包内用每个条目独立的 `MutableState` 原地改值却不触发列表重组，数据变更需通过不可变列表重组或 `SnapshotStateList` 结构修改驱动。

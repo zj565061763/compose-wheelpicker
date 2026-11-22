@@ -1,12 +1,15 @@
 package com.sd.lib.compose.wheelpicker
 
+import android.os.Build
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
@@ -22,10 +25,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.LookaheadScope
@@ -40,6 +45,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -53,14 +59,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -85,53 +94,55 @@ class WheelPickerInstrumentedTest {
       expectedMainAxisPx = with(density) { itemSizeDp.roundToPx() * 5 }
       expectedCrossAxisPx = with(density) { crossAxisDp.roundToPx() }
 
-      Box(
-        modifier = Modifier
-          .width(IntrinsicSize.Min)
-          .height(IntrinsicSize.Max)
-          .onSizeChanged { verticalMeasuredSize = it },
-      ) {
-        VerticalWheelPicker(
-          count = { 20 },
-          itemHeight = itemSizeDp,
-          unfocusedCount = 2,
-          focus = {
-            Box(modifier = Modifier.width(crossAxisDp))
-          },
-        ) { index ->
-          BasicText(text = "V-$index")
+      Column {
+        Box(
+          modifier = Modifier
+            .width(IntrinsicSize.Min)
+            .height(IntrinsicSize.Max)
+            .onSizeChanged { verticalMeasuredSize = it },
+        ) {
+          VerticalWheelPicker(
+            count = { 20 },
+            itemHeight = itemSizeDp,
+            unfocusedCount = 2,
+            focus = {
+              Box(modifier = Modifier.width(crossAxisDp))
+            },
+          ) { index ->
+            BasicText(text = "V-$index")
+          }
         }
-      }
 
-      Box(
-        modifier = Modifier
-          .width(IntrinsicSize.Max)
-          .height(IntrinsicSize.Min)
-          .onSizeChanged { horizontalMeasuredSize = it },
-      ) {
-        HorizontalWheelPicker(
-          count = { 20 },
-          itemWidth = itemSizeDp,
-          unfocusedCount = 2,
-          focus = {
-            Box(modifier = Modifier.height(crossAxisDp))
-          },
-        ) { index ->
-          BasicText(text = "H-$index")
+        Box(
+          modifier = Modifier
+            .width(IntrinsicSize.Max)
+            .height(IntrinsicSize.Min)
+            .onSizeChanged { horizontalMeasuredSize = it },
+        ) {
+          HorizontalWheelPicker(
+            count = { 20 },
+            itemWidth = itemSizeDp,
+            unfocusedCount = 2,
+            focus = {
+              Box(modifier = Modifier.height(crossAxisDp))
+            },
+          ) { index ->
+            BasicText(text = "H-$index")
+          }
         }
-      }
 
-      Box(modifier = Modifier.size(width = 60.dp, height = 24.dp)) {
-        VerticalWheelPicker(
-          count = { 10 },
-          state = tightState,
-          itemHeight = 48.dp,
-          unfocusedCount = 2,
-          focus = {
-            Box(modifier = Modifier.size(width = 120.dp, height = 48.dp))
-          },
-        ) { index ->
-          BasicText(text = "T-$index")
+        Box(modifier = Modifier.size(width = 60.dp, height = 24.dp)) {
+          VerticalWheelPicker(
+            count = { 10 },
+            state = tightState,
+            itemHeight = 48.dp,
+            unfocusedCount = 2,
+            focus = {
+              Box(modifier = Modifier.size(width = 120.dp, height = 48.dp))
+            },
+          ) { index ->
+            BasicText(text = "T-$index")
+          }
         }
       }
     }
@@ -311,35 +322,37 @@ class WheelPickerInstrumentedTest {
     val rtlState = WheelPickerState(initialIndex = 2)
 
     composeRule.setContent {
-      CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        HorizontalWheelPicker(
-          count = { 6 },
-          state = rtlState,
-          itemWidth = 50.dp,
-          unfocusedCount = 2,
-          focus = {
-            WheelPickerFocusHorizontal(
-              modifier = Modifier.testTag("focusHorizontalHairline"),
-              thickness = Dp.Hairline,
-            )
-          },
-          display = { index ->
-            DefaultWheelPickerDisplay(
-              modifier = Modifier.testTag("rtlDisplay-$index"),
-              index = index,
-            )
-          },
-        ) { index ->
-          BasicText(text = "RTL-$index")
+      Column {
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+          HorizontalWheelPicker(
+            count = { 6 },
+            state = rtlState,
+            itemWidth = 50.dp,
+            unfocusedCount = 2,
+            focus = {
+              WheelPickerFocusHorizontal(
+                modifier = Modifier.testTag("focusHorizontalHairline"),
+                thickness = Dp.Hairline,
+              )
+            },
+            display = { index ->
+              DefaultWheelPickerDisplay(
+                modifier = Modifier.testTag("rtlDisplay-$index"),
+                index = index,
+              )
+            },
+          ) { index ->
+            BasicText(text = "RTL-$index")
+          }
         }
-      }
 
-      WheelPickerFocusVertical(
-        modifier = Modifier
-          .size(80.dp, 40.dp)
-          .testTag("focusVerticalTransparent"),
-        color = Color.Transparent,
-      )
+        WheelPickerFocusVertical(
+          modifier = Modifier
+            .size(80.dp, 40.dp)
+            .testTag("focusVerticalTransparent"),
+          color = Color.Transparent,
+        )
+      }
     }
 
     composeRule.waitForIdle()
@@ -353,6 +366,170 @@ class WheelPickerInstrumentedTest {
     assertEquals(0f.toRawBits(), centerPct.toRawBits())
     assertTrue("Expected index 1 (visual right in RTL) > 0f, actual=$visualRightPct", visualRightPct > 0f)
     assertTrue("Expected index 3 (visual left in RTL) < 0f, actual=$visualLeftPct", visualLeftPct < 0f)
+  }
+
+  @Test
+  fun testTightParentClippingAndFocusIndicatorPixels() {
+    assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      return
+    }
+    val tightState = WheelPickerState(initialIndex = 2)
+
+    composeRule.setContent {
+      Column {
+        Box(
+          modifier = Modifier
+            .testTag("tightClipHost")
+            .size(width = 160.dp, height = 80.dp)
+            .background(Color.White),
+          contentAlignment = Alignment.Center,
+        ) {
+          VerticalWheelPicker(
+            modifier = Modifier
+              .testTag("tightClipWheel")
+              .size(width = 60.dp, height = 24.dp),
+            count = { 10 },
+            state = tightState,
+            itemHeight = 48.dp,
+            unfocusedCount = 2,
+            focus = {
+              Box(
+                modifier = Modifier.size(width = 120.dp, height = 48.dp),
+                contentAlignment = Alignment.Center,
+              ) {
+                Box(
+                  modifier = Modifier
+                    .requiredWidth(120.dp)
+                    .height(8.dp)
+                    .background(Color.Blue),
+                )
+              }
+            },
+            display = { index ->
+              Content(index)
+            },
+          ) { _ ->
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .background(Color.Red),
+            )
+          }
+        }
+
+        Box(
+          modifier = Modifier
+            .size(width = 80.dp, height = 40.dp)
+            .background(Color.Green),
+        ) {
+          WheelPickerFocusHorizontal(
+            modifier = Modifier.testTag("focusHorizontalPixels"),
+            thickness = Dp.Hairline,
+          )
+        }
+
+        Box(
+          modifier = Modifier
+            .size(width = 80.dp, height = 40.dp)
+            .background(Color.Green),
+        ) {
+          WheelPickerFocusVertical(
+            modifier = Modifier.testTag("focusVerticalPixels"),
+            thickness = Dp.Hairline,
+          )
+        }
+
+        Box(
+          modifier = Modifier
+            .size(width = 80.dp, height = 40.dp)
+            .background(Color.Green),
+        ) {
+          WheelPickerFocusVertical(
+            modifier = Modifier.testTag("focusTransparentPixels"),
+            color = Color.Transparent,
+          )
+        }
+      }
+    }
+
+    composeRule.waitForIdle()
+
+    val hostBounds = composeRule.onNodeWithTag("tightClipHost").fetchSemanticsNode().unclippedBoundsInRoot()
+    val wheelBounds = composeRule.onNodeWithTag("tightClipWheel").fetchSemanticsNode().unclippedBoundsInRoot()
+    val hostPixels = composeRule.onNodeWithTag("tightClipHost").captureToImage().toPixelMap()
+    val wheelLeft = (wheelBounds.left - hostBounds.left).roundToInt()
+    val wheelTop = (wheelBounds.top - hostBounds.top).roundToInt()
+    val wheelRight = (wheelBounds.right - hostBounds.left).roundToInt()
+    val wheelBottom = (wheelBounds.bottom - hostBounds.top).roundToInt()
+    val hostBg = hostPixels[0, 0]
+    assertTrue("Expected white host background, actual=$hostBg", hostBg.red > 0.95f && hostBg.green > 0.95f && hostBg.blue > 0.95f)
+
+    var hasRedInside = false
+    var hasBlueInside = false
+    for (y in 0 until hostPixels.height) {
+      for (x in 0 until hostPixels.width) {
+        val color = hostPixels[x, y]
+        val insideWheel = x in wheelLeft until wheelRight && y in wheelTop until wheelBottom
+        if (insideWheel) {
+          if (color.red > 0.8f && color.green < 0.2f && color.blue < 0.2f) {
+            hasRedInside = true
+          }
+          if (color.blue > 0.8f && color.red < 0.2f && color.green < 0.2f) {
+            hasBlueInside = true
+          }
+        } else {
+          assertEquals(
+            "Unexpected overflow pixel at ($x, $y) outside 60x24dp viewport [$wheelLeft..$wheelRight, $wheelTop..$wheelBottom)",
+            hostBg,
+            color,
+          )
+        }
+      }
+    }
+    assertTrue("Expected red item pixels inside tight viewport", hasRedInside)
+    assertTrue("Expected blue focus pixels inside tight viewport", hasBlueInside)
+
+    val horizontalPixels = composeRule.onNodeWithTag("focusHorizontalPixels").captureToImage().toPixelMap()
+    val sampleY = horizontalPixels.height / 2
+    val horizontalBg = horizontalPixels[horizontalPixels.width / 2, sampleY]
+    assertTrue(
+      "Expected green background in horizontal focus center, actual=$horizontalBg",
+      horizontalBg.green > 0.9f && horizontalBg.red < 0.1f && horizontalBg.blue < 0.1f,
+    )
+    assertNotEquals(horizontalBg, horizontalPixels[0, sampleY])
+    assertNotEquals(horizontalBg, horizontalPixels[horizontalPixels.width - 1, sampleY])
+    assertEquals(horizontalPixels[0, sampleY], horizontalPixels[horizontalPixels.width - 1, sampleY])
+    for (x in 1 until horizontalPixels.width - 1) {
+      assertEquals("Expected untouched background at x=$x", horizontalBg, horizontalPixels[x, sampleY])
+    }
+
+    val verticalPixels = composeRule.onNodeWithTag("focusVerticalPixels").captureToImage().toPixelMap()
+    val sampleX = verticalPixels.width / 2
+    val verticalBg = verticalPixels[sampleX, verticalPixels.height / 2]
+    assertTrue(
+      "Expected green background in vertical focus center, actual=$verticalBg",
+      verticalBg.green > 0.9f && verticalBg.red < 0.1f && verticalBg.blue < 0.1f,
+    )
+    assertNotEquals(verticalBg, verticalPixels[sampleX, 0])
+    assertNotEquals(verticalBg, verticalPixels[sampleX, verticalPixels.height - 1])
+    assertEquals(verticalPixels[sampleX, 0], verticalPixels[sampleX, verticalPixels.height - 1])
+    for (y in 1 until verticalPixels.height - 1) {
+      assertEquals("Expected untouched background at y=$y", verticalBg, verticalPixels[sampleX, y])
+    }
+
+    val transparentPixels = composeRule.onNodeWithTag("focusTransparentPixels").captureToImage().toPixelMap()
+    val transparentBg = transparentPixels[transparentPixels.width / 2, transparentPixels.height / 2]
+    assertTrue(
+      "Expected green background under transparent focus, actual=$transparentBg",
+      transparentBg.green > 0.9f && transparentBg.red < 0.1f && transparentBg.blue < 0.1f,
+    )
+    for (y in 0 until transparentPixels.height) {
+      for (x in 0 until transparentPixels.width) {
+        assertEquals("Expected transparent focus not to alter pixel at ($x, $y)", transparentBg, transparentPixels[x, y])
+      }
+    }
   }
 
   @Test
