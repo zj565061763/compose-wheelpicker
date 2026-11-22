@@ -12,8 +12,8 @@ internal class WheelSnapObserver(
   private val store: WheelPositionStore,
   private val lazyListState: LazyListState,
 ) {
-  /** 观察[owner]绑定的滚轮快照，静止且布局同步后执行自动归位并结算吸附索引 */
-  suspend fun observe(owner: Any) {
+  /** 观察滚轮快照，静止且布局同步后执行自动归位并结算吸附索引 */
+  suspend fun observe() {
     var wasScrolling = false
     snapshotFlow {
       val layoutInfo = lazyListState.layoutInfo
@@ -27,13 +27,8 @@ internal class WheelSnapObserver(
       )
     }.collect { snapshot ->
       val attachment = snapshot.attachment
-      if (attachment?.owner !== owner) {
+      if (attachment == null || attachment.count <= 0) {
         wasScrolling = false
-        return@collect
-      }
-      if (attachment.count <= 0) {
-        wasScrolling = false
-        store.clearSnappedIndex()
         return@collect
       }
       if (snapshot.isScrollInProgress) {
@@ -59,46 +54,29 @@ internal class WheelSnapObserver(
       }
 
       val currentAttachment = store.attachment
-      if (currentAttachment?.owner !== owner) {
-        return@collect
-      }
-      if (currentAttachment.count <= 0) {
-        store.clearSnappedIndex()
+      if (currentAttachment == null || currentAttachment.count <= 0) {
         return@collect
       }
       if (!store.isLayoutSyncedWith(currentAttachment.count)) {
         return@collect
       }
 
-      val currentOffset = lazyListState.firstVisibleItemScrollOffset
-      if (lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() && currentOffset != 0) {
-        val snapped = performAutoSnap(
-          attachment = currentAttachment,
-          currentOffset = currentOffset,
-        )
-        if (!snapped) {
+      if (lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() && lazyListState.firstVisibleItemScrollOffset != 0) {
+        if (!performAutoSnap(currentAttachment.count)) {
           wasScrolling = true
           return@collect
         }
       }
 
-      store.settleCurrentIndex(owner)
+      store.settleCurrentIndex()
     }
   }
 
   /** 静止停留在非零像素偏移时归位至最近条目，返回是否正常完成 */
-  private suspend fun performAutoSnap(
-    attachment: WheelAttachment,
-    currentOffset: Int,
-  ): Boolean {
-    val targetIndex = store.currentIndex.coerceIn(0, attachment.count - 1)
-    val distanceToNearest = minOf(currentOffset, (attachment.itemSizePx - currentOffset).coerceAtLeast(0))
+  private suspend fun performAutoSnap(count: Int): Boolean {
+    val targetIndex = store.currentIndex.coerceIn(0, count - 1)
     return try {
-      if (distanceToNearest > 1) {
-        lazyListState.animateScrollToItem(targetIndex)
-      } else {
-        lazyListState.scrollToItem(targetIndex)
-      }
+      lazyListState.animateScrollToItem(targetIndex)
       true
     } catch (_: CancellationException) {
       currentCoroutineContext().ensureActive()

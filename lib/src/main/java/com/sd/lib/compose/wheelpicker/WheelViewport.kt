@@ -11,7 +11,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -78,7 +77,6 @@ internal class WheelViewportState(
 
   /** 根据主轴约束上限收缩单侧未选中条目数并同步首尾内边距 */
   fun onMeasure(
-    orientation: WheelOrientation,
     density: Density,
     maxMainAxisPx: Int,
     itemSizePx: Int,
@@ -90,7 +88,6 @@ internal class WheelViewportState(
       unfocusedCount = requestedUnfocusedCount,
     )
     _paddingValues.update(
-      orientation = orientation,
       paddingDp = calculatePaddingDp(
         density = density,
         itemSizePx = itemSizePx,
@@ -101,50 +98,35 @@ internal class WheelViewportState(
   }
 
   fun updateClip(clip: Boolean) {
-    Snapshot.withoutReadObservation {
-      if (shouldClip != clip) {
-        shouldClip = clip
-      }
-    }
+    shouldClip = clip
   }
 }
 
 @Stable
 private class WheelPaddingValues(
-  orientation: WheelOrientation,
+  private val orientation: WheelOrientation,
   paddingDp: Dp,
 ) : PaddingValues {
-  private var _orientation by mutableStateOf(orientation)
   private var _paddingDp by mutableStateOf(paddingDp)
 
-  fun update(
-    orientation: WheelOrientation,
-    paddingDp: Dp,
-  ) {
-    Snapshot.withoutReadObservation {
-      if (_orientation != orientation) {
-        _orientation = orientation
-      }
-      if (_paddingDp != paddingDp) {
-        _paddingDp = paddingDp
-      }
-    }
+  fun update(paddingDp: Dp) {
+    _paddingDp = paddingDp
   }
 
   override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp {
-    return if (_orientation == WheelOrientation.Horizontal) _paddingDp else 0.dp
+    return if (orientation == WheelOrientation.Horizontal) _paddingDp else 0.dp
   }
 
   override fun calculateTopPadding(): Dp {
-    return if (_orientation == WheelOrientation.Vertical) _paddingDp else 0.dp
+    return if (orientation == WheelOrientation.Vertical) _paddingDp else 0.dp
   }
 
   override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp {
-    return if (_orientation == WheelOrientation.Horizontal) _paddingDp else 0.dp
+    return if (orientation == WheelOrientation.Horizontal) _paddingDp else 0.dp
   }
 
   override fun calculateBottomPadding(): Dp {
-    return if (_orientation == WheelOrientation.Vertical) _paddingDp else 0.dp
+    return if (orientation == WheelOrientation.Vertical) _paddingDp else 0.dp
   }
 }
 
@@ -201,7 +183,6 @@ internal fun createWheelViewportMeasurePolicy(
     ): MeasureResult {
       val maxMainAxisPx = orientation.maxMainAxisSize(constraints)
       val safeUnfocusedCount = viewportState.onMeasure(
-        orientation = orientation,
         density = this,
         maxMainAxisPx = maxMainAxisPx,
         itemSizePx = itemSizePx,

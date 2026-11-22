@@ -6,10 +6,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.Snapshot
 
 internal data class WheelAttachment(
-  val owner: Any,
   val count: Int,
   val itemSizePx: Int,
 )
@@ -49,10 +47,10 @@ internal class WheelPositionStore(
     return layoutInfo.visibleItemsInfo.isEmpty() || layoutInfo.totalItemsCount == expectedCount
   }
 
-  /** 判断滚轮是否归属[owner]、处于静止状态且布局已与当前条目数同步 */
-  fun isIdleAndLayoutSynced(owner: Any? = attachment?.owner): Boolean {
+  /** 判断滚轮是否已挂载非空数据、处于静止状态且布局已与当前条目数同步 */
+  fun isIdleAndLayoutSynced(): Boolean {
     val current = attachment
-    if (current == null || current.owner !== owner || current.count <= 0) {
+    if (current == null || current.count <= 0) {
       return false
     }
     return !lazyListState.isScrollInProgress && isLayoutSyncedWith(current.count)
@@ -74,52 +72,41 @@ internal class WheelPositionStore(
     )
   }
 
-  /** 同步[owner]实际测量生效的单侧未选中条目数 */
-  fun updateViewportUnfocusedCount(
-    owner: Any,
-    unfocusedCount: Int,
-  ) {
-    Snapshot.withoutReadObservation {
-      if (attachment?.owner === owner && _unfocusedCount != unfocusedCount) {
-        _unfocusedCount = unfocusedCount
-      }
-    }
+  /** 同步视口实际测量生效的单侧未选中条目数 */
+  fun updateViewportUnfocusedCount(unfocusedCount: Int) {
+    _unfocusedCount = unfocusedCount
   }
 
   /** 同步组件挂载参数，处理空列表过渡、重挂载位置恢复与缩容越界夹紧 */
   fun updateAttachment(
-    owner: Any,
     count: Int,
     unfocusedCount: Int,
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
   ) {
     val previousAttachment = attachment
-    if (previousAttachment?.owner !== owner) {
+    if (previousAttachment == null) {
       _unfocusedCount = unfocusedCount
     }
     _reverseVisualDirection = reverseVisualDirection
 
     if (count <= 0) {
       updateLastKnownIndexFromLive(previousAttachment)
-      attachment = WheelAttachment(owner = owner, count = 0, itemSizePx = itemSizePx)
+      attachment = WheelAttachment(count = 0, itemSizePx = itemSizePx)
       snappedIndex = -1
       return
     }
 
-    val wasInactiveOrSwitched = previousAttachment == null ||
-      previousAttachment.count <= 0 ||
-      previousAttachment.owner !== owner
-
+    val wasInactive = previousAttachment == null || previousAttachment.count <= 0
     var restoredTarget: Int? = null
-    if (wasInactiveOrSwitched) {
+    if (wasInactive) {
       val restoreTarget = lastKnownIndex.coerceIn(0, count - 1)
       lastKnownIndex = restoreTarget
       restoredTarget = restoreTarget
       lazyListState.requestScrollToItem(index = restoreTarget, scrollOffset = 0)
     }
 
-    attachment = WheelAttachment(owner = owner, count = count, itemSizePx = itemSizePx)
+    attachment = WheelAttachment(count = count, itemSizePx = itemSizePx)
 
     if (restoredTarget != null) {
       snappedIndex = restoredTarget
@@ -134,18 +121,11 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 卸载[owner]绑定的滚轮，保存最近有效索引并重置挂载与吸附状态 */
-  fun detach(owner: Any) {
-    val current = attachment
-    if (current?.owner !== owner) {
-      return
-    }
+  /** 卸载滚轮，保存最近有效索引并重置挂载与吸附状态 */
+  fun detach() {
+    val current = attachment ?: return
     updateLastKnownIndexFromLive(current)
     attachment = null
-    snappedIndex = -1
-  }
-
-  fun clearSnappedIndex() {
     snappedIndex = -1
   }
 
@@ -160,16 +140,8 @@ internal class WheelPositionStore(
   }
 
   /** 滚轮静止、布局已同步且首项零偏移对齐时结算吸附索引 */
-  fun settleCurrentIndex(owner: Any? = attachment?.owner) {
-    val current = attachment
-    if (current == null || current.owner !== owner) {
-      return
-    }
-    if (current.count <= 0) {
-      snappedIndex = -1
-      return
-    }
-    if (!isIdleAndLayoutSynced(owner = owner)) {
+  fun settleCurrentIndex() {
+    if (!isIdleAndLayoutSynced()) {
       return
     }
     if (lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() && lazyListState.firstVisibleItemScrollOffset != 0) {

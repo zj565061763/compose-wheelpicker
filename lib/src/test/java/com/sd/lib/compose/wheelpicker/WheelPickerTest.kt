@@ -169,9 +169,7 @@ class WheelPickerTest {
     assertFalse(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Rtl))
 
     val state = WheelPickerState(initialIndex = 5)
-    val owner = Any()
     state.updateAttachment(
-      owner = owner,
       count = 10,
       unfocusedCount = 2,
       itemSizePx = 100,
@@ -203,29 +201,27 @@ class WheelPickerTest {
     }
     assertEquals(7, savedBeforeAttach)
 
-    val ownerA = Any()
-    state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
+    state.updateAttachment(count = 10, unfocusedCount = 2, itemSizePx = 48)
     assertEquals(7, state.currentIndex)
     assertEquals(7, state.snappedIndex)
     assertEquals(0f, state.scrollPercentageOf(7)!!, 0.0001f)
 
     // 缩容使原选中索引 >= 新条目数时，立即夹紧至 count - 1
-    state.updateAttachment(owner = ownerA, count = 6, unfocusedCount = 2, itemSizePx = 48)
+    state.updateAttachment(count = 6, unfocusedCount = 2, itemSizePx = 48)
     assertEquals(5, state.snappedIndex)
 
     // 旧组件卸载后挂载新组件，恢复最近选中索引并限制在新条目数边界内
-    state.detach(ownerA)
+    state.detach()
     assertEquals(-1, state.currentIndex)
     assertEquals(-1, state.snappedIndex)
     assertNull(state.scrollPercentageOf(5))
 
-    val ownerB = Any()
-    state.updateAttachment(owner = ownerB, count = 5, unfocusedCount = 2, itemSizePx = 48)
+    state.updateAttachment(count = 5, unfocusedCount = 2, itemSizePx = 48)
     assertEquals(4, state.currentIndex)
     assertEquals(4, state.snappedIndex)
 
     // count 变为 0 时，状态重置为 -1，Saver 保存进入空列表前的有效选中项 4
-    state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
+    state.updateAttachment(count = 0, unfocusedCount = 2, itemSizePx = 48)
     assertEquals(-1, state.currentIndex)
     assertEquals(-1, state.snappedIndex)
     assertNull(state.scrollPercentageOf(4))
@@ -236,11 +232,11 @@ class WheelPickerTest {
 
     // 模拟 LazyList 曾非空后变为空时将 firstVisibleItemIndex 重置为 0 的行为，数据恢复后仍能找回索引 4
     state.lazyListState.requestScrollToItem(0)
-    state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
+    state.updateAttachment(count = 10, unfocusedCount = 2, itemSizePx = 48)
     assertEquals(4, state.currentIndex)
     assertEquals(4, state.snappedIndex)
 
-    state.detach(ownerB)
+    state.detach()
     assertEquals(-1, state.currentIndex)
     assertEquals(-1, state.snappedIndex)
     assertNull(state.scrollPercentageOf(4))
@@ -254,9 +250,7 @@ class WheelPickerTest {
         state.scrollToIndex(6)
         assertEquals(-1, state.snappedIndex)
 
-        val owner = Any()
         state.updateAttachment(
-          owner = owner,
           count = 10,
           unfocusedCount = 2,
           itemSizePx = 48,
@@ -266,7 +260,6 @@ class WheelPickerTest {
 
         // count == 0 时调用 animateScrollToIndex 不挂起且覆盖待恢复位置
         state.updateAttachment(
-          owner = owner,
           count = 0,
           unfocusedCount = 2,
           itemSizePx = 48,
@@ -275,7 +268,6 @@ class WheelPickerTest {
         assertEquals(-1, state.snappedIndex)
 
         state.updateAttachment(
-          owner = owner,
           count = 10,
           unfocusedCount = 2,
           itemSizePx = 48,
@@ -284,12 +276,11 @@ class WheelPickerTest {
         assertEquals(8, state.snappedIndex)
 
         // 卸载后预跳转超出后续挂载条目数时自动夹紧至边界
-        state.detach(owner)
+        state.detach()
         state.animateScrollToIndex(20)
         assertEquals(-1, state.snappedIndex)
 
         state.updateAttachment(
-          owner = owner,
           count = 10,
           unfocusedCount = 2,
           itemSizePx = 48,
@@ -372,9 +363,7 @@ class WheelPickerTest {
 
     // 验证视口测量阶段更新内边距、裁剪与单侧未选中条目数时不触发快照读观测
     val observeState = WheelPickerState(initialIndex = 2)
-    val observeOwner = Any()
     observeState.updateAttachment(
-      owner = observeOwner,
       count = 10,
       unfocusedCount = 2,
       itemSizePx = 48,
@@ -391,10 +380,7 @@ class WheelPickerTest {
       unfocusedCount = 2,
       viewportState = observeViewportState,
       onResolvedUnfocusedCount = { safeCount ->
-        observeState.updateViewportUnfocusedCount(
-          owner = observeOwner,
-          unfocusedCount = safeCount,
-        )
+        observeState.updateViewportUnfocusedCount(safeCount)
       },
     )
     val observeScope = FakeMeasureScope(backingDensity = density)

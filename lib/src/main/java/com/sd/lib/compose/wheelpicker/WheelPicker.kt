@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
@@ -142,7 +141,6 @@ private fun WheelPicker(
   val latestCountState = rememberUpdatedState(count)
   val latestKeyState = rememberUpdatedState(key)
 
-  val owner = remember(state) { WheelOwner() }
   val density = LocalDensity.current
   val layoutDirection = LocalLayoutDirection.current
   val itemSizePx = remember(density, itemSize) {
@@ -164,7 +162,6 @@ private fun WheelPicker(
 
   SideEffect {
     state.updateAttachment(
-      owner = owner,
       count = resolvedCount,
       unfocusedCount = unfocusedCount,
       itemSizePx = itemSizePx,
@@ -172,14 +169,14 @@ private fun WheelPicker(
     )
   }
 
-  DisposableEffect(state, owner) {
+  DisposableEffect(state) {
     onDispose {
-      state.detach(owner)
+      state.detach()
     }
   }
 
-  LaunchedEffect(state, owner) {
-    state.observeSnappedIndex(owner)
+  LaunchedEffect(state) {
+    state.observeSnappedIndex()
   }
 
   val displayHolder = rememberWheelPickerDisplayHolder(
@@ -204,29 +201,24 @@ private fun WheelPicker(
     {
       val itemCount = latestCountState.value()
       require(itemCount >= 0) { "require count >= 0, but was $itemCount" }
-      if (itemCount > 0) {
-        items(
-          count = itemCount,
-          key = latestKeyState.value,
-        ) { index ->
-          Box(
-            modifier = itemModifier.semantics(mergeDescendants = true) {
-              selected = state.snappedIndex == index
-            },
-            contentAlignment = Alignment.Center,
-          ) {
-            displayHolder.Display(index)
-          }
+      items(
+        count = itemCount,
+        key = latestKeyState.value,
+      ) { index ->
+        Box(
+          modifier = itemModifier.semantics(mergeDescendants = true) {
+            selected = state.snappedIndex == index
+          },
+          contentAlignment = Alignment.Center,
+        ) {
+          displayHolder.Display(index)
         }
       }
     }
   }
-  val onResolvedUnfocusedCount: (Int) -> Unit = remember(state, owner) {
+  val onResolvedUnfocusedCount: (Int) -> Unit = remember(state) {
     { safeUnfocusedCount ->
-      state.updateViewportUnfocusedCount(
-        owner = owner,
-        unfocusedCount = safeUnfocusedCount,
-      )
+      state.updateViewportUnfocusedCount(safeUnfocusedCount)
     }
   }
 
@@ -294,6 +286,3 @@ private fun WheelLazyList(
     }
   }
 }
-
-@Immutable
-private class WheelOwner

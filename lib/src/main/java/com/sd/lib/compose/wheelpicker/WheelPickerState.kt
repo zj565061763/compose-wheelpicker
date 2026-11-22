@@ -89,25 +89,17 @@ class WheelPickerState(
     return _store.scrollPercentageOf(index)
   }
 
-  internal fun updateViewportUnfocusedCount(
-    owner: Any,
-    unfocusedCount: Int,
-  ) {
-    _store.updateViewportUnfocusedCount(
-      owner = owner,
-      unfocusedCount = unfocusedCount,
-    )
+  internal fun updateViewportUnfocusedCount(unfocusedCount: Int) {
+    _store.updateViewportUnfocusedCount(unfocusedCount)
   }
 
   internal fun updateAttachment(
-    owner: Any,
     count: Int,
     unfocusedCount: Int,
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
   ) {
     _store.updateAttachment(
-      owner = owner,
       count = count,
       unfocusedCount = unfocusedCount,
       itemSizePx = itemSizePx,
@@ -115,12 +107,12 @@ class WheelPickerState(
     )
   }
 
-  internal fun detach(owner: Any) {
-    _store.detach(owner)
+  internal fun detach() {
+    _store.detach()
   }
 
-  internal suspend fun observeSnappedIndex(owner: Any) {
-    _snapObserver.observe(owner)
+  internal suspend fun observeSnappedIndex() {
+    _snapObserver.observe()
   }
 
   /** 执行跳转到[index]，未挂载或空数据时直接记录目标而不挂起 */
