@@ -30,35 +30,24 @@ fun WheelPickerState.SnappedIndex(block: (Int) -> Unit) {
   }
 }
 
-/** 滚轮状态，同一个实例同时只能绑定一个滚轮组件 */
+/**
+ * 滚轮状态，同一个实例同时只能绑定一个滚轮组件
+ *
+ * @param initialIndex 首次创建时的初始索引
+ */
 @Stable
-class WheelPickerState internal constructor(
-  initialIndex: Int,
-  scrollController: WheelScrollController?,
+class WheelPickerState(
+  initialIndex: Int = 0,
 ) {
-  /** 创建滚轮状态，[initialIndex]为首次创建时的初始索引 */
-  constructor(initialIndex: Int = 0) : this(
-    initialIndex = initialIndex,
-    scrollController = null,
-  )
-
   internal val lazyListState = LazyListState(firstVisibleItemIndex = initialIndex.coerceAtLeast(0))
 
-  private val _scrollController: WheelScrollController = scrollController ?: LazyListWheelScrollController(
-    lazyListState = lazyListState,
-  )
   private val _store = WheelPositionStore(
     initialIndex = initialIndex,
-    scrollController = _scrollController,
-  )
-  private val _scrollExecutor = WheelScrollExecutor(
-    store = _store,
-    scrollController = _scrollController,
+    lazyListState = lazyListState,
   )
   private val _snapObserver = WheelSnapObserver(
     store = _store,
-    scrollExecutor = _scrollExecutor,
-    scrollController = _scrollController,
+    lazyListState = lazyListState,
   )
 
   /** 当前位于中心焦点区域的条目索引，滚动过程中实时变化，未挂载或无数据时为-1 */
@@ -76,23 +65,23 @@ class WheelPickerState internal constructor(
   /** 是否正在滚动 */
   val isScrollInProgress: Boolean
     get() {
-      return _scrollController.isScrollInProgress
+      return lazyListState.isScrollInProgress
     }
 
   /** 交互事件源 */
   val interactionSource: InteractionSource
     get() {
-      return _scrollController.interactionSource ?: lazyListState.interactionSource
+      return lazyListState.interactionSource
     }
 
   /** 动画滚动到[index]，超出当前有效范围时自动限制在边界内；未挂载或空数据时记录目标并在后续数据就绪时生效 */
   suspend fun animateScrollToIndex(index: Int) {
-    _scrollExecutor.scrollToIndex(index = index, animate = true)
+    scrollToIndex(index = index, animate = true)
   }
 
   /** 立即跳转到[index]，超出当前有效范围时自动限制在边界内；未挂载或空数据时记录目标并在后续数据就绪时生效 */
   suspend fun scrollToIndex(index: Int) {
-    _scrollExecutor.scrollToIndex(index = index, animate = false)
+    scrollToIndex(index = index, animate = false)
   }
 
   /** 计算[index]相对中心焦点的视觉偏移比例，范围[-1f, 1f]，0f表示居中，负值偏向视口上侧或左侧，正值偏向视口下侧或右侧，未挂载或无数据时返回null */
@@ -110,44 +99,79 @@ class WheelPickerState internal constructor(
     )
   }
 
-  internal fun onFlingHandoffResolved(owner: Any) {
-    _store.onFlingHandoffResolved(owner)
-  }
-
-  /** 同步组件挂载参数，空列表或切换持有者时取消活跃滚动 */
   internal fun updateAttachment(
     owner: Any,
     count: Int,
     unfocusedCount: Int,
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
-    flingGuardEnabled: Boolean = false,
     countProvider: (() -> Int)? = null,
   ) {
-    val previousOwner = _store.attachment?.owner
     _store.updateAttachment(
       owner = owner,
       count = count,
       unfocusedCount = unfocusedCount,
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
-      flingGuardEnabled = flingGuardEnabled,
       countProvider = countProvider,
     )
-    if (count <= 0 || (previousOwner != null && previousOwner !== owner)) {
-      _scrollExecutor.cancelActiveScroll()
-    }
   }
 
-  /** 解绑[owner]并在成功卸载时取消活跃滚动 */
   internal fun detach(owner: Any) {
-    if (_store.detach(owner)) {
-      _scrollExecutor.cancelActiveScroll()
-    }
+    _store.detach(owner)
   }
 
   internal suspend fun observeSnappedIndex(owner: Any) {
     _snapObserver.observe(owner)
+  }
+
+  /** 执行跳转到[index]，未挂载、空数据或首次测量前直接记录目标而不挂起 */
+  private suspend fun scrollToIndex(
+    index: Int,
+    animate: Boolean,
+  ) {
+    _store.syncLiveCount()
+    val currentAttachment = _store.attachment
+    if (currentAttachment == null || currentAttachment.count <= 0) {
+      val requestedIndex = index.coerceAtLeast(0)
+      _store.pendingTargetIndex = requestedIndex
+      _store.lastKnownIndex = requestedIndex
+      lazyListState.requestScrollToItem(index = requestedIndex, scrollOffset = 0)
+      return
+    }
+
+    val targetIndex = index.coerceIn(0, currentAttachment.count - 1)
+    _store.lastKnownIndex = targetIndex
+
+    if (lazyListState.layoutInfo.totalItemsCount <= 0) {
+      _store.pendingTargetIndex = null
+      lazyListState.requestScrollToItem(index = targetIndex, scrollOffset = 0)
+      _store.updateSnappedIndex(targetIndex)
+      return
+    }
+
+    _store.pendingTargetIndex = targetIndex
+    var succeeded = false
+    try {
+      if (animate) {
+        lazyListState.animateScrollToItem(targetIndex)
+      } else {
+        lazyListState.scrollToItem(targetIndex)
+      }
+      succeeded = true
+    } finally {
+      val latestAttachment = _store.attachment
+      if (latestAttachment != null && latestAttachment.count > 0 && !lazyListState.isScrollInProgress) {
+        if (_store.pendingTargetIndex == targetIndex) {
+          _store.pendingTargetIndex = null
+        }
+        if (succeeded) {
+          _store.settleCurrentIndexIfAligned()
+        } else {
+          _store.updateLastKnownIndexFromLive()
+        }
+      }
+    }
   }
 
   companion object {

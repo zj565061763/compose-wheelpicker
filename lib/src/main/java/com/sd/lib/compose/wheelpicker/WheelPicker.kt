@@ -13,19 +13,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 
 /**
@@ -122,7 +118,7 @@ fun HorizontalWheelPicker(
   )
 }
 
-/** 校验滚轮参数，协调视口自适应、状态挂载、离手保护与列表渲染 */
+/** 校验滚轮参数，协调视口自适应、状态挂载与列表渲染 */
 @Composable
 private fun WheelPicker(
   modifier: Modifier = Modifier,
@@ -140,20 +136,11 @@ private fun WheelPicker(
 ) {
   require(itemSize.value.isFinite() && itemSize > 0.dp) { "require finite itemSize > 0.dp, but was $itemSize" }
   require(unfocusedCount >= 0) { "require unfocusedCount >= 0, but was $unfocusedCount" }
+  val resolvedCount = count()
+  require(resolvedCount >= 0) { "require count >= 0, but was $resolvedCount" }
 
   val latestCountState = rememberUpdatedState(count)
   val latestKeyState = rememberUpdatedState(key)
-  val resolvedCountState = remember {
-    derivedStateOf { latestCountState.value() }
-  }
-  val countProvider: () -> Int = remember(resolvedCountState) {
-    {
-      val value = resolvedCountState.value
-      require(value >= 0) { "require count >= 0, but was $value" }
-      value
-    }
-  }
-  val resolvedCount = countProvider()
 
   val owner = remember(state) { WheelOwner() }
   val density = LocalDensity.current
@@ -177,21 +164,7 @@ private fun WheelPicker(
     reverseLayout = reverseLayout,
     layoutDirection = layoutDirection,
   )
-
   val scrollEnabled = userScrollEnabled && (resolvedCount > 0)
-  val flingGuardConnection = remember(state, owner) {
-    object : NestedScrollConnection {
-      override suspend fun onPreFling(available: Velocity): Velocity {
-        state.onFlingHandoffResolved(owner)
-        return Velocity.Zero
-      }
-
-      override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-        state.onFlingHandoffResolved(owner)
-        return Velocity.Zero
-      }
-    }
-  }
 
   SideEffect {
     state.updateAttachment(
@@ -200,8 +173,7 @@ private fun WheelPicker(
       unfocusedCount = resolvedUnfocusedCount,
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
-      flingGuardEnabled = userScrollEnabled,
-      countProvider = countProvider,
+      countProvider = latestCountState.value,
     )
   }
 
@@ -229,13 +201,14 @@ private fun WheelPicker(
   }
   val lazyListContent: LazyListScope.() -> Unit = remember(
     state,
-    countProvider,
+    latestCountState,
     latestKeyState,
     itemModifier,
     displayHolder,
   ) {
     {
-      val itemCount = countProvider()
+      val itemCount = latestCountState.value()
+      require(itemCount >= 0) { "require count >= 0, but was $itemCount" }
       if (itemCount > 0) {
         items(
           count = itemCount,
@@ -261,15 +234,6 @@ private fun WheelPicker(
       )
     }
   }
-  val listModifier = remember(viewportState, orientation, itemSizePx, flingGuardConnection) {
-    Modifier
-      .bindViewportListPadding(
-        viewportState = viewportState,
-        orientation = orientation,
-        itemSizePx = itemSizePx,
-      )
-      .nestedScroll(flingGuardConnection)
-  }
 
   WheelViewportBox(
     modifier = modifier,
@@ -280,7 +244,6 @@ private fun WheelPicker(
     onResolvedUnfocusedCount = onResolvedUnfocusedCount,
     listContent = {
       WheelLazyList(
-        modifier = listModifier,
         orientation = orientation,
         state = state.lazyListState,
         contentPadding = viewportState.contentPadding,

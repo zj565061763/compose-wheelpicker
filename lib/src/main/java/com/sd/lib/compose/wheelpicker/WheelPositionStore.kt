@@ -1,5 +1,6 @@
 package com.sd.lib.compose.wheelpicker
 
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -15,11 +16,8 @@ internal data class WheelAttachment(
 
 internal class WheelPositionStore(
   initialIndex: Int,
-  private val scrollController: WheelScrollController,
+  private val lazyListState: LazyListState,
 ) {
-  private var _observerOwner: Any? = null
-  private var _flingGuardRequested = false
-  private var _hasFlingGuard = false
   private var _countProvider: (() -> Int)? = null
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
@@ -31,12 +29,6 @@ internal class WheelPositionStore(
   var attachment by mutableStateOf<WheelAttachment?>(null)
     private set
 
-  var isDragged by mutableStateOf(false)
-    private set
-
-  var isAwaitingFlingHandoff by mutableStateOf(false)
-    private set
-
   var snappedIndex by mutableIntStateOf(-1)
     private set
 
@@ -46,8 +38,8 @@ internal class WheelPositionStore(
       -1
     } else {
       calculateSnappedIndex(
-        firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
-        firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
+        firstVisibleItemIndex = lazyListState.firstVisibleItemIndex,
+        firstVisibleItemScrollOffset = lazyListState.firstVisibleItemScrollOffset,
         count = current.count,
         itemSizePx = current.itemSizePx,
       )
@@ -56,23 +48,17 @@ internal class WheelPositionStore(
 
   /** 判断底层测量条目总数是否已与[expectedCount]同步 */
   fun isLayoutSyncedWith(expectedCount: Int): Boolean {
-    return !scrollController.hasVisibleItems || scrollController.totalItemsCount == expectedCount
+    val layoutInfo = lazyListState.layoutInfo
+    return layoutInfo.visibleItemsInfo.isEmpty() || layoutInfo.totalItemsCount == expectedCount
   }
 
-  /** 判断滚轮是否归属[owner]、处于静止无待决手势状态且布局已与当前条目数同步 */
-  fun isIdleAndLayoutSynced(
-    owner: Any? = attachment?.owner,
-    isProgrammaticScrollInFlight: Boolean = false,
-  ): Boolean {
+  /** 判断滚轮是否归属[owner]、处于静止状态且布局已与当前条目数同步 */
+  fun isIdleAndLayoutSynced(owner: Any? = attachment?.owner): Boolean {
     val current = attachment
     if (current == null || current.owner !== owner || current.count <= 0) {
       return false
     }
-    return !scrollController.isScrollInProgress &&
-      !isProgrammaticScrollInFlight &&
-      !isDragged &&
-      !isAwaitingFlingHandoff &&
-      isLayoutSyncedWith(current.count)
+    return !lazyListState.isScrollInProgress && isLayoutSyncedWith(current.count)
   }
 
   /** 计算[index]相对中心焦点的视觉偏移比例，未挂载或空数据时返回null */
@@ -83,8 +69,8 @@ internal class WheelPositionStore(
     }
     return calculateScrollPercentage(
       index = index,
-      firstVisibleItemIndex = scrollController.firstVisibleItemIndex,
-      firstVisibleItemScrollOffset = scrollController.firstVisibleItemScrollOffset,
+      firstVisibleItemIndex = lazyListState.firstVisibleItemIndex,
+      firstVisibleItemScrollOffset = lazyListState.firstVisibleItemScrollOffset,
       unfocusedCount = _unfocusedCount,
       itemSizePx = current.itemSizePx,
       reverseDirection = _reverseVisualDirection,
@@ -103,80 +89,19 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 绑定[owner]观察会话，切换持有者时清理残留拖拽与离手等待状态 */
-  fun onObserverAttached(owner: Any) {
-    if (_observerOwner !== owner) {
-      _observerOwner = owner
-      isDragged = false
-      isAwaitingFlingHandoff = false
-    }
-  }
-
-  /** 解绑[owner]观察会话并清理残留拖拽与离手等待状态 */
-  fun onObserverDetached(owner: Any) {
-    if (_observerOwner === owner) {
-      _observerOwner = null
-      isDragged = false
-      isAwaitingFlingHandoff = false
-    }
-  }
-
-  /** 更新[owner]拖拽状态，开始新拖拽时清除上一轮离手交接等待 */
-  fun updateDragged(
-    owner: Any,
-    dragged: Boolean,
-  ) {
-    if (_observerOwner === owner) {
-      if (dragged) {
-        isAwaitingFlingHandoff = false
-      }
-      if (isDragged != dragged) {
-        isDragged = dragged
-      }
-    }
-  }
-
-  /** 拖拽结束且启用离手保护时进入交接等待 */
-  fun onDragStoppedAwaitingFling(owner: Any) {
-    if (_observerOwner === owner && _hasFlingGuard) {
-      isAwaitingFlingHandoff = true
-    }
-  }
-
-  fun clearAwaitingFlingHandoff() {
-    isAwaitingFlingHandoff = false
-  }
-
-  /** 嵌套滚动交接完成或超时后解除[owner]的离手等待 */
-  fun onFlingHandoffResolved(owner: Any) {
-    if (attachment?.owner === owner || _observerOwner === owner) {
-      isAwaitingFlingHandoff = false
-    }
-  }
-
   /** 同步组件挂载参数，处理空列表过渡、重挂载位置恢复与缩容越界夹紧 */
   fun updateAttachment(
     owner: Any,
     count: Int,
     unfocusedCount: Int,
     itemSizePx: Int,
-    reverseVisualDirection: Boolean,
-    flingGuardEnabled: Boolean,
+    reverseVisualDirection: Boolean = false,
     countProvider: (() -> Int)? = null,
   ) {
     val previousAttachment = attachment
-    if (previousAttachment == null || previousAttachment.owner !== owner) {
-      isDragged = false
-      isAwaitingFlingHandoff = false
-    }
     _unfocusedCount = unfocusedCount
     _reverseVisualDirection = reverseVisualDirection
-    _flingGuardRequested = flingGuardEnabled
     _countProvider = countProvider
-    _hasFlingGuard = flingGuardEnabled && count > 0
-    if (!_hasFlingGuard) {
-      isAwaitingFlingHandoff = false
-    }
 
     if (count <= 0) {
       recordLiveIndexIfNoPending(previousAttachment)
@@ -196,7 +121,7 @@ internal class WheelPositionStore(
       pendingTargetIndex = null
       lastKnownIndex = restoreTarget
       restoredTarget = restoreTarget
-      scrollController.requestScrollToItem(index = restoreTarget, scrollOffset = 0)
+      lazyListState.requestScrollToItem(index = restoreTarget, scrollOffset = 0)
     } else {
       val pending = pendingTargetIndex
       if (pending != null) {
@@ -213,7 +138,7 @@ internal class WheelPositionStore(
       return
     }
 
-    // 缩容时仅将上一轮越界的吸附索引夹紧至新边界，待新列表完成测量且交接结束后再按实际位置结算
+    // 缩容时仅将上一轮越界的吸附索引夹紧至新边界，待新列表完成测量且滚动静止后再按实际位置结算
     if (snappedIndex >= count) {
       val clamped = count - 1
       snappedIndex = clamped
@@ -234,27 +159,21 @@ internal class WheelPositionStore(
         unfocusedCount = _unfocusedCount,
         itemSizePx = current.itemSizePx,
         reverseVisualDirection = _reverseVisualDirection,
-        flingGuardEnabled = _flingGuardRequested,
         countProvider = provider,
       )
     }
   }
 
   /** 卸载[owner]绑定的滚轮，保存最近有效索引并重置挂载与吸附状态 */
-  fun detach(owner: Any): Boolean {
+  fun detach(owner: Any) {
     val current = attachment
     if (current?.owner !== owner) {
-      return false
+      return
     }
     recordLiveIndexIfNoPending(current)
-    _flingGuardRequested = false
     _countProvider = null
-    _hasFlingGuard = false
-    isDragged = false
-    isAwaitingFlingHandoff = false
     attachment = null
     snappedIndex = -1
-    return true
   }
 
   fun clearSnappedIndex() {
@@ -276,10 +195,7 @@ internal class WheelPositionStore(
   }
 
   /** 滚轮静止且布局同步后按当前中心条目结算吸附索引 */
-  fun onIdleSettled(
-    owner: Any,
-    isProgrammaticScrollInFlight: Boolean,
-  ) {
+  fun onIdleSettled(owner: Any) {
     val finalAttachment = attachment
     if (finalAttachment?.owner !== owner) {
       return
@@ -288,12 +204,7 @@ internal class WheelPositionStore(
       snappedIndex = -1
       return
     }
-    if (
-      !isIdleAndLayoutSynced(
-        owner = owner,
-        isProgrammaticScrollInFlight = isProgrammaticScrollInFlight,
-      )
-    ) {
+    if (!isIdleAndLayoutSynced(owner = owner)) {
       return
     }
     val settled = currentIndex
@@ -304,11 +215,12 @@ internal class WheelPositionStore(
   }
 
   /** 滚轮静止且首项零像素偏移对齐时结算吸附索引 */
-  fun settleCurrentIndexIfAligned(isProgrammaticScrollInFlight: Boolean = false) {
-    if (!isIdleAndLayoutSynced(isProgrammaticScrollInFlight = isProgrammaticScrollInFlight)) {
+  fun settleCurrentIndexIfAligned() {
+    if (!isIdleAndLayoutSynced()) {
       return
     }
-    if (scrollController.hasVisibleItems && scrollController.firstVisibleItemScrollOffset != 0) {
+    val layoutInfo = lazyListState.layoutInfo
+    if (layoutInfo.visibleItemsInfo.isNotEmpty() && lazyListState.firstVisibleItemScrollOffset != 0) {
       return
     }
     val settled = currentIndex
@@ -336,7 +248,7 @@ internal class WheelPositionStore(
   private fun hasSyncedLivePosition(target: WheelAttachment? = attachment): Boolean {
     return target != null &&
       target.count > 0 &&
-      scrollController.totalItemsCount > 0 &&
+      lazyListState.layoutInfo.totalItemsCount > 0 &&
       isLayoutSyncedWith(target.count)
   }
 

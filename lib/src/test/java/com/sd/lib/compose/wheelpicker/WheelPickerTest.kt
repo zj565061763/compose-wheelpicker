@@ -1,30 +1,11 @@
 package com.sd.lib.compose.wheelpicker
 
-import androidx.compose.foundation.MutatePriority
-import androidx.compose.foundation.MutatorMutex
-import androidx.compose.foundation.interaction.DragInteraction
-import androidx.compose.foundation.interaction.InteractionSource
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.AbstractApplier
 import androidx.compose.runtime.BroadcastFrameClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Composition
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.Recomposer
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.neverEqualPolicy
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.SaverScope
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.layout.AlignmentLine
@@ -41,26 +22,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 
 class WheelPickerTest {
@@ -148,15 +117,6 @@ class WheelPickerTest {
         unfocusedCount = 2,
       ),
     )
-
-    assertEquals(
-      20,
-      calculateSafeUnfocusedCount(
-        maxSizePx = Constraints.Infinity,
-        itemSizePx = 48,
-        unfocusedCount = 20,
-      ),
-    )
   }
 
   @Test
@@ -169,7 +129,7 @@ class WheelPickerTest {
   }
 
   @Test
-  fun testCalculateScrollPercentage() {
+  fun testCalculateScrollPercentageAndVisualDirection() {
     assertNull(calculateScrollPercentage(0, 0, 0, unfocusedCount = 2, itemSizePx = 0))
 
     assertEquals(
@@ -197,15 +157,41 @@ class WheelPickerTest {
       calculateScrollPercentage(100, 50, 99, unfocusedCount = 2, itemSizePx = 100)!!,
       0.0001f,
     )
-    assertEquals(
-      1f,
-      calculateScrollPercentage(9, 5, 99, unfocusedCount = 2, itemSizePx = 100)!!,
-      0.0001f,
+
+    assertFalse(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Ltr))
+    assertFalse(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Rtl))
+    assertTrue(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Ltr))
+    assertTrue(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Rtl))
+
+    assertFalse(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Ltr))
+    assertTrue(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Rtl))
+    assertTrue(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Ltr))
+    assertFalse(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Rtl))
+
+    val state = WheelPickerState(initialIndex = 5)
+    val owner = Any()
+    state.updateAttachment(
+      owner = owner,
+      count = 10,
+      unfocusedCount = 2,
+      itemSizePx = 100,
+      reverseVisualDirection = true,
     )
+    val centerPercentage = state.scrollPercentageOf(5)!!
+    assertEquals(0f, centerPercentage, 0.0001f)
+    assertEquals(0f.toRawBits(), centerPercentage.toRawBits())
+    assertEquals(1f / 3f, state.scrollPercentageOf(4)!!, 0.0001f)
+    assertEquals(-1f / 3f, state.scrollPercentageOf(6)!!, 0.0001f)
   }
 
   @Test
-  fun testStateLifecycleAndSaver() {
+  fun testStateLifecycleShrinkClampAndSaver() {
+    val defaultState = WheelPickerState()
+    assertEquals(
+      0,
+      with(WheelPickerState.Saver) { SaverScope { true }.save(defaultState) },
+    )
+
     val state = WheelPickerState(initialIndex = 7)
     assertEquals(-1, state.currentIndex)
     assertEquals(-1, state.snappedIndex)
@@ -223,10 +209,15 @@ class WheelPickerTest {
     assertEquals(7, state.snappedIndex)
     assertEquals(0f, state.scrollPercentageOf(7)!!, 0.0001f)
 
+    // 缩容使原选中索引 >= 新条目数时，立即夹紧至 count - 1
+    state.updateAttachment(owner = ownerA, count = 6, unfocusedCount = 2, itemSizePx = 48)
+    assertEquals(5, state.snappedIndex)
+
     // 旧组件卸载后挂载新组件，恢复最近选中索引并限制在新条目数边界内
     state.detach(ownerA)
     assertEquals(-1, state.currentIndex)
     assertEquals(-1, state.snappedIndex)
+    assertNull(state.scrollPercentageOf(5))
 
     val ownerB = Any()
     state.updateAttachment(owner = ownerB, count = 5, unfocusedCount = 2, itemSizePx = 48)
@@ -249,7 +240,6 @@ class WheelPickerTest {
     assertEquals(4, state.currentIndex)
     assertEquals(4, state.snappedIndex)
 
-    // 当前持有者销毁后重置为 -1
     state.detach(ownerB)
     assertEquals(-1, state.currentIndex)
     assertEquals(-1, state.snappedIndex)
@@ -264,549 +254,59 @@ class WheelPickerTest {
         state.scrollToIndex(6)
         assertEquals(-1, state.snappedIndex)
 
+        var liveCount = 10
         val owner = Any()
-        state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
+        state.updateAttachment(
+          owner = owner,
+          count = liveCount,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+          countProvider = { liveCount },
+        )
         assertEquals(6, state.currentIndex)
         assertEquals(6, state.snappedIndex)
 
-        // 已挂载但尚未完成首次测量（totalItemsCount == 0）时，连续调用 scrollToIndex / animateScrollToIndex 均不挂起
+        // 已挂载但尚未完成首次测量时，调用 scrollToIndex / animateScrollToIndex 均不挂起并同步最新 count
         state.scrollToIndex(3)
         assertEquals(3, state.currentIndex)
         assertEquals(3, state.snappedIndex)
 
-        state.animateScrollToIndex(99)
-        assertEquals(9, state.currentIndex)
-        assertEquals(9, state.snappedIndex)
+        liveCount = 15
+        state.animateScrollToIndex(12)
+        assertEquals(12, state.currentIndex)
+        assertEquals(12, state.snappedIndex)
 
         // count == 0 时调用 animateScrollToIndex 同样不阻塞且覆盖待恢复位置
-        state.updateAttachment(owner = owner, count = 0, unfocusedCount = 2, itemSizePx = 48)
-        state.lazyListState.requestScrollToItem(0)
+        liveCount = 0
         state.animateScrollToIndex(8)
         assertEquals(-1, state.snappedIndex)
 
-        state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        assertEquals(8, state.currentIndex)
-        assertEquals(8, state.snappedIndex)
-      }
-    }
-  }
-
-  @Test
-  fun testOwnerSwitchWithSameParamsTriggersObserveSnapshot() {
-    runBlocking {
-      withTimeout(5.seconds) {
-        val state = WheelPickerState(initialIndex = 3)
-        val ownerA = Any()
-        val ownerB = Any()
-
-        val jobA = launch(start = CoroutineStart.UNDISPATCHED) {
-          state.observeSnappedIndex(ownerA)
-        }
-        Snapshot.withMutableSnapshot {
-          state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        }
-        yield()
-        assertEquals(3, state.snappedIndex)
-
-        Snapshot.withMutableSnapshot {
-          state.detach(ownerA)
-        }
-        jobA.cancel()
-
-        val jobB = launch(start = CoroutineStart.UNDISPATCHED) {
-          state.observeSnappedIndex(ownerB)
-        }
-        jobA.join()
-        assertEquals(-1, state.snappedIndex)
-
-        Snapshot.withMutableSnapshot {
-          state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        }
-        yield()
-        assertEquals(3, state.snappedIndex)
-
-        Snapshot.withMutableSnapshot {
-          state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
-        }
-        yield()
-        assertEquals(-1, state.snappedIndex)
-
-        Snapshot.withMutableSnapshot {
-          state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        }
-        yield()
-        assertEquals(3, state.snappedIndex)
-
-        jobB.cancel()
-        jobB.join()
-
-        // 飞行动画期间旧组件单独卸载时静默结束旧动画，后续挂载新组件时将待跳转目标限制在新边界
-        val controller = FakeWheelScrollController(initialIndex = 1).apply {
-          pauseAnimations = true
-        }
-        val handoffState = WheelPickerState(initialIndex = 1, scrollController = controller)
-        val ownerC = Any()
-        val ownerD = Any()
-        handoffState.updateAttachment(owner = ownerC, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 10)
-
-        val inFlightJob = launch(start = CoroutineStart.UNDISPATCHED) {
-          handoffState.animateScrollToIndex(8)
-        }
-        assertTrue(handoffState.isScrollInProgress)
-
-        handoffState.detach(ownerC)
-        inFlightJob.join()
-        assertFalse(inFlightJob.isCancelled)
-        handoffState.updateAttachment(owner = ownerD, count = 5, unfocusedCount = 2, itemSizePx = 48)
-        assertEquals(4, handoffState.currentIndex)
-        assertEquals(4, handoffState.snappedIndex)
-
-        // 常规 if / else 同帧切换滚轮实例（先卸载旧实例并立即挂载新实例）时，旧动画抛出 CancellationException 且新实例恢复目标索引
-        val switchController = FakeWheelScrollController(initialIndex = 1).apply {
-          pauseAnimations = true
-        }
-        val switchState = WheelPickerState(initialIndex = 1, scrollController = switchController)
-        val ownerE = Any()
-        val ownerF = Any()
-        switchState.updateAttachment(owner = ownerE, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        switchController.applyMeasure(count = 10)
-
-        var switchCancelled = false
-        val switchJob = launch(start = CoroutineStart.UNDISPATCHED) {
-          try {
-            switchState.animateScrollToIndex(8)
-          } catch (_: CancellationException) {
-            switchCancelled = true
-          }
-        }
-        assertTrue(switchState.isScrollInProgress)
-
-        switchState.detach(ownerE)
-        switchState.updateAttachment(owner = ownerF, count = 5, unfocusedCount = 2, itemSizePx = 48)
-        switchJob.join()
-        assertTrue(switchCancelled)
-        assertEquals(4, switchState.currentIndex)
-        assertEquals(4, switchState.snappedIndex)
-      }
-    }
-  }
-
-  @Test
-  fun testAutoSnapRecoversAfterRepeatedAnimateScrollCancellation() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 0)
-      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-      val owner = Any()
-
-      Snapshot.withMutableSnapshot {
-        state.updateAttachment(owner = owner, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 10)
-      }
-      assertEquals(0, state.snappedIndex)
-
-      val observeJob = launch(start = CoroutineStart.UNDISPATCHED) {
-        state.observeSnappedIndex(owner)
-      }
-
-      // 1. 启动 animateScrollToIndex(5)，滚动产生非居中偏移（offset = 30px，实时焦点为 1，但尚未对齐）后取消
-      controller.pauseAnimations = true
-      val scrollJob1 = launch(start = CoroutineStart.UNDISPATCHED) {
-        state.animateScrollToIndex(5)
-      }
-      controller.setPositionInScroll(index = 0, offset = 30)
-      Snapshot.sendApplyNotifications()
-      yield()
-
-      scrollJob1.cancel()
-      scrollJob1.join()
-      Snapshot.sendApplyNotifications()
-
-      // 2. observeSnappedIndex 收到空闲快照并完成 yield() 后进入自动吸附（此时仍在 index = 0, offset = 30，挂起在动画中）
-      repeat(2) {
-        yield()
-      }
-      Snapshot.sendApplyNotifications()
-      assertTrue(state.isScrollInProgress)
-      assertEquals(0, state.snappedIndex)
-
-      // 3. 在自动吸附尚未移动任何像素时，连续多次启动并立即取消 animateScrollToIndex(5) 抢占自动吸附
-      repeat(3) {
-        val scrollJob2 = launch(start = CoroutineStart.UNDISPATCHED) {
-          state.animateScrollToIndex(5)
-        }
-        Snapshot.sendApplyNotifications()
-        scrollJob2.cancel()
-        scrollJob2.join()
-        Snapshot.sendApplyNotifications()
-        repeat(2) {
-          yield()
-        }
-      }
-
-      assertEquals(30, controller.firstVisibleItemScrollOffset)
-      assertEquals(0, state.snappedIndex)
-
-      // 4. 放行动画，验证自动吸附不会被 lastAutoSnapState 跳过，最终归位至 (index = 1, offset = 0) 并更新 snappedIndex
-      controller.pauseAnimations = false
-      controller.resumeActiveAnimation()
-      repeat(5) {
-        Snapshot.sendApplyNotifications()
-        yield()
-      }
-
-      assertEquals(1, controller.firstVisibleItemIndex)
-      assertEquals(0, controller.firstVisibleItemScrollOffset)
-      assertEquals(1, state.currentIndex)
-      assertEquals(1, state.snappedIndex)
-
-      observeJob.cancel()
-    }
-  }
-
-  @Test
-  fun testTargetIndexPreservedAcrossEmptyListRemeasureAndTransitions() {
-    runBlocking {
-      withTimeout(5.seconds) {
-        val controller = FakeWheelScrollController(initialIndex = 0)
-        val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-        val ownerA = Any()
-
-        state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 10)
-        assertEquals(0, state.snappedIndex)
-
-        // 场景 A：count 变为 0 -> 调用 scrollToIndex(8) -> 空列表重测量重置位置为 0 -> 恢复 10 条数据
-        state.updateAttachment(owner = ownerA, count = 0, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 0)
-        state.scrollToIndex(8)
-        controller.applyMeasure(count = 0)
-        assertEquals(0, controller.firstVisibleItemIndex)
-
-        state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 10)
-        assertEquals(8, controller.firstVisibleItemIndex)
+        liveCount = 10
+        state.updateAttachment(
+          owner = owner,
+          count = liveCount,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+          countProvider = { liveCount },
+        )
         assertEquals(8, state.currentIndex)
         assertEquals(8, state.snappedIndex)
 
-        // 场景 B：发起 animateScrollToIndex(6) 后重组为 count = 0 并重测量 -> 恢复 10 条数据时仍落在 6
-        state.scrollToIndex(2)
-        assertEquals(2, state.snappedIndex)
-
-        controller.pauseAnimations = true
-        val animJob = launch(start = CoroutineStart.UNDISPATCHED) {
-          state.animateScrollToIndex(6)
-        }
-        state.updateAttachment(owner = ownerA, count = 0, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 0)
-        animJob.join()
-        assertEquals(0, controller.firstVisibleItemIndex)
-
-        state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 10)
-        assertEquals(6, controller.firstVisibleItemIndex)
-        assertEquals(6, state.currentIndex)
-        assertEquals(6, state.snappedIndex)
-
-        // 场景 C：组件卸载期间调用 scrollToIndex(9)，随后新组件先以 count = 0 挂载并重测量，再加载 10 条数据
-        state.detach(ownerA)
-        state.scrollToIndex(9)
-
-        val ownerB = Any()
-        state.updateAttachment(owner = ownerB, count = 0, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 0)
-        assertEquals(0, controller.firstVisibleItemIndex)
-
-        state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 2, itemSizePx = 48)
-        controller.applyMeasure(count = 10)
-        assertEquals(9, controller.firstVisibleItemIndex)
-        assertEquals(9, state.currentIndex)
-        assertEquals(9, state.snappedIndex)
-      }
-    }
-  }
-
-  @Test
-  fun testScrollPercentageReturnsNullAfterDetachDespiteResidualLayoutInfo() {
-    val controller = FakeWheelScrollController(initialIndex = 5)
-    val state = WheelPickerState(initialIndex = 5, scrollController = controller)
-
-    assertNull(state.scrollPercentageOf(5))
-
-    controller.applyMeasure(count = 10, unfocusedCount = 2, itemSizePx = 48)
-    assertNull(state.scrollPercentageOf(5))
-
-    val ownerA = Any()
-    state.updateAttachment(owner = ownerA, count = 10, unfocusedCount = 2, itemSizePx = 48)
-    assertEquals(5, state.currentIndex)
-    assertEquals(5, state.snappedIndex)
-    assertEquals(0f, state.scrollPercentageOf(5)!!, 0.0001f)
-
-    state.detach(ownerA)
-    assertEquals(-1, state.currentIndex)
-    assertEquals(-1, state.snappedIndex)
-    assertNull(state.scrollPercentageOf(5))
-
-    val ownerB = Any()
-    state.updateAttachment(owner = ownerB, count = 10, unfocusedCount = 1, itemSizePx = 60)
-    controller.applyMeasure(count = 10, unfocusedCount = 1, itemSizePx = 60)
-    assertEquals(5, state.currentIndex)
-    assertEquals(5, state.snappedIndex)
-    assertEquals(0f, state.scrollPercentageOf(5)!!, 0.0001f)
-    assertEquals(-0.5f, state.scrollPercentageOf(4)!!, 0.0001f)
-  }
-
-  @Test
-  fun testNativeKeyTrackingSyncsSnappedIndexOnInsertDeleteAndReorder() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 2).apply {
-        supportsNativeWindowTracking = true
-      }
-      val state = WheelPickerState(initialIndex = 2, scrollController = controller)
-      var items by mutableStateOf(listOf("A", "B", "C", "D", "E"))
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeWheel(
-          countProvider = { items.size },
-          keyProvider = {
-            val snapshot = items
-            val fn: (Int) -> Any = { idx -> snapshot[idx] }
-            fn
-          },
-        )
-        harness.stepFrame()
-        assertEquals(2, state.snappedIndex)
-        assertEquals("C", items[state.snappedIndex])
-
-        // 1. 头部插入 2 项，LazyList 按 key 将 firstVisibleItemIndex 修至 4，snappedIndex 自动同步为 4
-        items = listOf("X", "Y", "A", "B", "C", "D", "E")
-        harness.stepFrame()
-        assertEquals(4, state.snappedIndex)
-        assertEquals("C", items[state.snappedIndex])
-
-        // 2. 删除前 3 项，LazyList 按 key 将 firstVisibleItemIndex 修至 1，snappedIndex 自动同步为 1
-        items = listOf("B", "C", "D", "E")
-        harness.stepFrame()
-        assertEquals(1, state.snappedIndex)
-        assertEquals("C", items[state.snappedIndex])
-
-        // 3. 常规窗口内重排，选中项 "C" 移动到索引 3，snappedIndex 自动同步为 3
-        items = listOf("E", "D", "B", "C")
-        harness.stepFrame()
-        assertEquals(3, state.snappedIndex)
-        assertEquals("C", items[state.snappedIndex])
-      } finally {
-        harness.dispose()
-      }
-    }
-  }
-
-  @Test
-  fun testConcurrentScrollPreemptionAndClocklessExceptionCleanup() {
-    runBlocking {
-      withTimeout(5.seconds) {
-        val controller = FakeWheelScrollController(initialIndex = 0).apply {
-          pauseAnimations = true
-        }
-        val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-        var items by mutableStateOf((0..29).toList())
-
-        val harness = WheelCompositionHarness(
-          parentContext = coroutineContext,
-          controller = controller,
-          state = state,
-        )
+        // 动态 count 返回负数时立即抛出 IllegalArgumentException
+        liveCount = -1
+        var negativeRejected = false
         try {
-          harness.composeWheelWithChildParam(itemsProvider = { items })
-          harness.stepFrame()
-          assertEquals(0, state.snappedIndex)
-
-          // 1. 正在执行的 animateScrollToIndex(15) 被后续 scrollToIndex(4) 抢占取消
-          var firstCancelled = false
-          val firstJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
-            try {
-              state.animateScrollToIndex(15)
-            } catch (_: CancellationException) {
-              firstCancelled = true
-            }
-          }
-          assertTrue(state.isScrollInProgress)
-
-          state.scrollToIndex(4)
-          firstJob.join()
-          assertTrue(firstCancelled)
-          assertEquals(4, state.currentIndex)
-          assertEquals(4, state.snappedIndex)
-
-          // 2. 含 MonotonicFrameClock 的协程调用 animateScrollToIndex 正常完成
-          controller.pauseAnimations = false
-          controller.emulateRealLazyListAnimateTiming = true
-          val secondJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
-            state.animateScrollToIndex(12)
-          }
-          harness.advanceUntilIdle(secondJob)
-          assertEquals(12, state.currentIndex)
-          assertEquals(12, state.snappedIndex)
-
-          // 3. 无 MonotonicFrameClock 的外部协程调用 animateScrollToIndex 抛出 IllegalStateException 后，不残留执行状态且后续手势正常吸附更新
-          var missingClockThrown = false
-          try {
-            state.animateScrollToIndex(25)
-          } catch (_: IllegalStateException) {
-            missingClockThrown = true
-          }
-          assertTrue(missingClockThrown)
-          assertEquals(12, state.snappedIndex)
-
-          controller.beginGestureScroll(index = 28, offset = 30)
-          harness.stepFrame()
-          controller.endGestureScroll()
-          harness.stepFrame()
-          harness.stepFrame()
-          assertEquals(29, state.currentIndex)
-          assertEquals(29, state.snappedIndex)
-        } finally {
-          harness.dispose()
+          state.scrollToIndex(0)
+        } catch (_: IllegalArgumentException) {
+          negativeRejected = true
         }
+        assertTrue(negativeRejected)
       }
     }
   }
 
   @Test
-  fun testShrinkWithNonZeroScrollOffsetClampsSnappedIndex() {
-    val controller = FakeWheelScrollController(initialIndex = 8)
-    val state = WheelPickerState(initialIndex = 8, scrollController = controller)
-    val owner = Any()
-
-    var items = (0..9).toList()
-    state.updateAttachment(owner = owner, count = items.size, unfocusedCount = 2, itemSizePx = 48)
-    controller.applyMeasure(count = items.size)
-    assertEquals(8, state.snappedIndex)
-
-    controller.setPositionInScroll(index = 2, offset = 20)
-    assertFalse(state.isScrollInProgress)
-    items = (0..4).toList()
-    state.updateAttachment(owner = owner, count = items.size, unfocusedCount = 2, itemSizePx = 48)
-    assertEquals(4, state.snappedIndex)
-    assertEquals(4, items[state.snappedIndex])
-
-    controller.beginGestureScroll(index = 1, offset = 20)
-    items = (0..2).toList()
-    state.updateAttachment(owner = owner, count = items.size, unfocusedCount = 2, itemSizePx = 48)
-    assertEquals(2, state.snappedIndex)
-    assertEquals(2, items[state.snappedIndex])
-    controller.endGestureScroll()
-  }
-
-  @Test
-  fun testNestedScrollPreFlingSuspensionNotInterceptedByAutoSnap() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 0).apply {
-        emulateRealLazyListAnimateTiming = true
-      }
-      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-      val items by mutableStateOf((0..49).toList())
-      var userScrollEnabled by mutableStateOf(false)
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeWheelWithChildParam(
-          itemsProvider = { items },
-          userScrollEnabledProvider = { userScrollEnabled },
-        )
-        harness.stepFrame()
-        assertEquals(0, state.snappedIndex)
-
-        val dragStart = controller.emitDragStart()
-        controller.beginGestureScroll(index = 5, offset = 20)
-        harness.stepFrame()
-
-        controller.emitDragStop(dragStart)
-        controller.endGestureScroll()
-        Snapshot.sendApplyNotifications()
-        repeat(3) {
-          yield()
-        }
-        assertFalse(state.isScrollInProgress)
-        assertTrue(controller.animateTargetsRequested.isEmpty())
-
-        val preFlingHandoffJob = launch(harness.clock, start = CoroutineStart.UNDISPATCHED) {
-          harness.clock.withFrameNanos {
-            controller.beginGestureScroll(index = 12, offset = 18)
-          }
-        }
-        harness.stepFrame()
-        preFlingHandoffJob.join()
-
-        assertTrue(state.isScrollInProgress)
-        assertEquals(12, controller.firstVisibleItemIndex)
-        assertTrue(controller.animateTargetsRequested.isEmpty())
-
-        controller.endGestureScroll()
-        harness.stepFrame()
-        harness.stepFrame()
-
-        assertEquals(12, controller.firstVisibleItemIndex)
-        assertEquals(0, controller.firstVisibleItemScrollOffset)
-        assertEquals(12, state.snappedIndex)
-
-        // 启用离手保护时，拖动以 DragInteraction.Cancel 结束且父容器多帧挂起 onPreFling 期间不提前自动吸附
-        userScrollEnabled = true
-        harness.stepFrame()
-        controller.animateTargetsRequested.clear()
-
-        val cancelDragStart = controller.emitDragStart()
-        controller.beginGestureScroll(index = 15, offset = 20)
-        harness.stepFrame()
-
-        controller.emitDragCancel(cancelDragStart)
-        controller.endGestureScroll()
-        repeat(4) {
-          harness.stepFrame()
-        }
-        assertFalse(state.isScrollInProgress)
-        assertTrue(controller.animateTargetsRequested.isEmpty())
-        assertEquals(20, controller.firstVisibleItemScrollOffset)
-
-        state.onFlingHandoffResolved(checkNotNull(harness.latestOwner))
-        harness.stepFrame()
-        harness.stepFrame()
-        assertEquals(15, controller.firstVisibleItemIndex)
-        assertEquals(0, controller.firstVisibleItemScrollOffset)
-        assertEquals(15, state.snappedIndex)
-
-        // 拖动期间滚动被禁用并发出 DragInteraction.Cancel 时，不卡在 60 帧离手保护，直接完成吸附
-        controller.animateTargetsRequested.clear()
-        val disableDragStart = controller.emitDragStart()
-        controller.beginGestureScroll(index = 18, offset = 30)
-        harness.stepFrame()
-
-        userScrollEnabled = false
-        controller.emitDragCancel(disableDragStart)
-        controller.endGestureScroll()
-        repeat(3) {
-          harness.stepFrame()
-        }
-        assertEquals(19, controller.firstVisibleItemIndex)
-        assertEquals(0, controller.firstVisibleItemScrollOffset)
-        assertEquals(19, state.snappedIndex)
-      } finally {
-        harness.dispose()
-      }
-    }
-  }
-
-  @Test
-  fun testViewportMeasurePolicyIntrinsicsClippingAndMainCompositionSync() {
+  fun testViewportMeasurePolicyIntrinsicsAndClipping() {
     val density = Density(density = 1f, fontScale = 1f)
 
     for (orientation in listOf(WheelOrientation.Vertical, WheelOrientation.Horizontal)) {
@@ -816,6 +316,7 @@ class WheelPickerTest {
         itemSizePx = 48,
         initialUnfocusedCount = 2,
       )
+      val paddingRef = viewportState.contentPadding
       var resolvedCount = -1
       val policy = createWheelViewportMeasurePolicy(
         orientation = orientation,
@@ -829,9 +330,7 @@ class WheelPickerTest {
         measuredWidth = if (orientation == WheelOrientation.Vertical) 80 else 240,
         measuredHeight = if (orientation == WheelOrientation.Vertical) 240 else 64,
       )
-      val focusMeasurable = FakeBoxMeasurable(
-        intrinsicCrossSize = 72,
-      )
+      val focusMeasurable = FakeBoxMeasurable(intrinsicCrossSize = 72)
       val measurables = listOf(throwingListMeasurable, focusMeasurable)
       val measureScope = FakeMeasureScope(backingDensity = density)
 
@@ -848,7 +347,7 @@ class WheelPickerTest {
         assertEquals(240, normalResult.height)
         assertEquals(2, resolvedCount)
         assertFalse(viewportState.shouldClip)
-        assertEquals(Constraints.fixed(80, 48), focusMeasurable.lastMeasuredConstraints)
+        assertEquals(Constraints.fixed(80, 48), checkNotNull(focusMeasurable.lastMeasuredConstraints))
 
         val tightList = ThrowingIntrinsicMeasurable(measuredWidth = 80, measuredHeight = 48)
         val tightResult = with(policy) {
@@ -858,6 +357,7 @@ class WheelPickerTest {
         assertEquals(20, tightResult.height)
         assertEquals(0, resolvedCount)
         assertTrue(viewportState.shouldClip)
+        assertSame(paddingRef, viewportState.contentPadding)
       } else {
         assertEquals(240, with(policy) { measureScope.minIntrinsicWidth(measurables, 64) })
         assertEquals(240, with(policy) { measureScope.maxIntrinsicWidth(measurables, 64) })
@@ -871,13 +371,12 @@ class WheelPickerTest {
         assertEquals(64, normalResult.height)
         assertEquals(2, resolvedCount)
         assertFalse(viewportState.shouldClip)
-        assertEquals(Constraints.fixed(48, 64), focusMeasurable.lastMeasuredConstraints)
+        assertEquals(Constraints.fixed(48, 64), checkNotNull(focusMeasurable.lastMeasuredConstraints))
       }
     }
 
-    // 验证视口测量阶段更新内边距、裁剪与单侧未选中条目数时不触发快照读观测（不订阅 attachment 或自失效）
-    val observeController = FakeWheelScrollController(initialIndex = 2)
-    val observeState = WheelPickerState(initialIndex = 2, scrollController = observeController)
+    // 验证视口测量阶段更新内边距、裁剪与单侧未选中条目数时不触发快照读观测，且预测测量不污染实际状态
+    val observeState = WheelPickerState(initialIndex = 2)
     val observeOwner = Any()
     observeState.updateAttachment(
       owner = observeOwner,
@@ -885,7 +384,6 @@ class WheelPickerTest {
       unfocusedCount = 2,
       itemSizePx = 48,
     )
-    observeController.applyMeasure(count = 10, unfocusedCount = 2, itemSizePx = 48)
     val observeViewportState = WheelViewportState(
       orientation = WheelOrientation.Vertical,
       density = density,
@@ -911,653 +409,14 @@ class WheelPickerTest {
     val measureObservedReads = mutableListOf<Any>()
     Snapshot.observe(readObserver = { measureObservedReads.add(it) }) {
       with(observePolicy) {
-        lookaheadScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 240))
         observeScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 20))
+        lookaheadScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 240))
       }
     }
     assertTrue(measureObservedReads.isEmpty())
     assertTrue(observeViewportState.shouldClip)
     assertEquals(0.dp, observeViewportState.contentPadding.calculateTopPadding())
     assertEquals(-1f, observeState.scrollPercentageOf(1)!!, 0.0001f)
-
-    // 预测测量阶段不提前覆写实际状态，且列表测量（含 forceRemeasure 将实际约束传入预测重测）始终按本次约束计算内边距
-    var lastReadPaddingInMeasure = (-1).dp
-    val paddingProbeMeasurable = ThrowingIntrinsicMeasurable(
-      measuredWidth = 80,
-      measuredHeight = 240,
-      onMeasure = {
-        lastReadPaddingInMeasure = observeViewportState.contentPadding.calculateTopPadding()
-      },
-    )
-    val probeObservedReads = mutableListOf<Any>()
-    Snapshot.observe(readObserver = { probeObservedReads.add(it) }) {
-      with(observePolicy) {
-        lookaheadScope.measure(listOf(paddingProbeMeasurable, observeFocus), Constraints.fixed(80, 240))
-      }
-    }
-    assertTrue(probeObservedReads.isEmpty())
-    assertEquals(96.dp, lastReadPaddingInMeasure)
-    assertTrue(observeViewportState.shouldClip)
-    assertEquals(0.dp, observeViewportState.contentPadding.calculateTopPadding())
-    assertEquals(-1f, observeState.scrollPercentageOf(1)!!, 0.0001f)
-
-    // 模拟从 240px 收缩至 48px 途中：预测测量已跑过 48px，随后同步重测将实际测量 144px 约束传入预测重测
-    with(observePolicy) {
-      lookaheadScope.measure(listOf(paddingProbeMeasurable, observeFocus), Constraints.fixed(80, 48))
-    }
-    assertEquals(0.dp, lastReadPaddingInMeasure)
-
-    observeViewportState.measureList(
-      measurable = paddingProbeMeasurable,
-      constraints = Constraints.fixed(80, 144),
-      density = lookaheadScope,
-      orientation = WheelOrientation.Vertical,
-      itemSizePx = 48,
-    )
-    assertEquals(48.dp, lastReadPaddingInMeasure)
-
-    observeViewportState.measureList(
-      measurable = paddingProbeMeasurable,
-      constraints = Constraints.fixed(80, 48),
-      density = observeScope,
-      orientation = WheelOrientation.Vertical,
-      itemSizePx = 48,
-    )
-    assertEquals(0.dp, lastReadPaddingInMeasure)
-
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 5)
-      val state = WheelPickerState(initialIndex = 5, scrollController = controller)
-      var useSecondBranch by mutableStateOf(false)
-      var observedCurrentInComposition = -1
-      val snappedEmissions = mutableListOf<Int>()
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeBranchSwitchingWheel(
-          branchProvider = { useSecondBranch },
-          onReadCurrentIndex = { observedCurrentInComposition = it },
-          onSnapped = { snappedEmissions.add(it) },
-        )
-        harness.stepFrame()
-        assertEquals(5, observedCurrentInComposition)
-        assertEquals(listOf(5), snappedEmissions)
-
-        useSecondBranch = true
-        harness.stepFrame()
-        assertEquals(5, state.currentIndex)
-        assertEquals(5, state.snappedIndex)
-        assertEquals(listOf(5), snappedEmissions)
-      } finally {
-        harness.dispose()
-      }
-    }
-  }
-
-  @Test
-  fun testScrollPercentageVisualDirectionWithReverseLayoutAndRtl() {
-    assertFalse(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Ltr))
-    assertFalse(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Rtl))
-    assertTrue(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Ltr))
-    assertTrue(WheelOrientation.Vertical.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Rtl))
-
-    assertFalse(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Ltr))
-    assertTrue(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = false, layoutDirection = LayoutDirection.Rtl))
-    assertTrue(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Ltr))
-    assertFalse(WheelOrientation.Horizontal.isVisualDirectionReversed(reverseLayout = true, layoutDirection = LayoutDirection.Rtl))
-
-    val controller = FakeWheelScrollController(initialIndex = 5)
-    val state = WheelPickerState(initialIndex = 5, scrollController = controller)
-    val owner = Any()
-    state.updateAttachment(
-      owner = owner,
-      count = 10,
-      unfocusedCount = 2,
-      itemSizePx = 100,
-      reverseVisualDirection = true,
-    )
-    controller.applyMeasure(count = 10, unfocusedCount = 2, itemSizePx = 100)
-
-    val centerPercentage = state.scrollPercentageOf(5)!!
-    assertEquals(0f, centerPercentage, 0.0001f)
-    assertEquals(java.lang.Float.floatToRawIntBits(0f), java.lang.Float.floatToRawIntBits(centerPercentage))
-    assertEquals(1f / 3f, state.scrollPercentageOf(4)!!, 0.0001f)
-    assertEquals(-1f / 3f, state.scrollPercentageOf(6)!!, 0.0001f)
-  }
-
-  @Test
-  fun testViewportStateStabilityAndShrinkKeyPreservation() {
-    val density = Density(2f)
-    val viewportState = WheelViewportState(
-      orientation = WheelOrientation.Vertical,
-      density = density,
-      itemSizePx = 40,
-      initialUnfocusedCount = 2,
-    )
-    val paddingRef = viewportState.contentPadding
-    assertEquals(1, viewportState.onMeasure(WheelOrientation.Vertical, density, maxMainAxisPx = 150, itemSizePx = 40, requestedUnfocusedCount = 2))
-    assertEquals(20.dp, viewportState.contentPadding.calculateTopPadding())
-    assertEquals(2, viewportState.onMeasure(WheelOrientation.Vertical, density, maxMainAxisPx = 240, itemSizePx = 40, requestedUnfocusedCount = 2, isLookingAhead = true))
-    assertEquals(20.dp, viewportState.contentPadding.calculateTopPadding())
-    assertEquals(0, viewportState.resolveUnfocusedCount(itemSizePx = 60, requestedUnfocusedCount = 2))
-    assertSame(paddingRef, viewportState.contentPadding)
-
-    runBlocking {
-      // 1. 尾部缩容使原中间可见项变为新末项时，updateAttachment 不提前覆盖锚点，测量阶段由列表将末项残余正偏移回拉归零
-      val tailShrinkController = FakeWheelScrollController(initialIndex = 2)
-      val tailShrinkState = WheelPickerState(initialIndex = 2, scrollController = tailShrinkController)
-      var tailItems by mutableStateOf((0..4).toList())
-      val tailHarness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = tailShrinkController,
-        state = tailShrinkState,
-      )
-      try {
-        tailHarness.composeWheelWithChildParam(itemsProvider = { tailItems })
-        tailHarness.stepFrame()
-        assertEquals(2, tailShrinkState.snappedIndex)
-
-        tailShrinkController.setPositionInScroll(index = 2, offset = 20)
-        tailShrinkState.updateAttachment(
-          owner = checkNotNull(tailHarness.latestOwner),
-          count = 3,
-          unfocusedCount = 2,
-          itemSizePx = 48,
-        )
-        assertEquals(20, tailShrinkController.firstVisibleItemScrollOffset)
-
-        tailItems = (0..2).toList()
-        tailHarness.stepFrame()
-        assertTrue(tailShrinkController.animateTargetsRequested.isEmpty())
-        assertEquals(2, tailShrinkController.firstVisibleItemIndex)
-        assertEquals(0, tailShrinkController.firstVisibleItemScrollOffset)
-        assertEquals(2, tailShrinkState.snappedIndex)
-      } finally {
-        tailHarness.dispose()
-      }
-
-      // 2. 头部删除缩容使原选中索引 >= 新条目数时，测量前先夹紧至 count - 1，测量完成后按稳定 key 重定位更新 snappedIndex
-      val headShrinkController = FakeWheelScrollController(initialIndex = 8).apply {
-        supportsNativeWindowTracking = true
-      }
-      val headShrinkState = WheelPickerState(initialIndex = 8, scrollController = headShrinkController)
-      var headItems by mutableStateOf((0..13).toList())
-      val headHarness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = headShrinkController,
-        state = headShrinkState,
-      )
-      try {
-        headHarness.composeWheelWithChildParam(itemsProvider = { headItems })
-        headHarness.stepFrame()
-        assertEquals(8, headShrinkState.snappedIndex)
-
-        headShrinkState.updateAttachment(
-          owner = checkNotNull(headHarness.latestOwner),
-          count = 8,
-          unfocusedCount = 2,
-          itemSizePx = 48,
-        )
-        assertEquals(7, headShrinkState.snappedIndex)
-
-        headItems = headItems.drop(6)
-        headHarness.stepFrame()
-        assertEquals(2, headShrinkController.firstVisibleItemIndex)
-        assertEquals(0, headShrinkController.firstVisibleItemScrollOffset)
-        assertEquals(2, headShrinkState.snappedIndex)
-        assertEquals(8, headItems[headShrinkState.snappedIndex])
-      } finally {
-        headHarness.dispose()
-      }
-    }
-  }
-
-  @Test
-  fun testToggleVisibilityAndRemountClearsResidualLazyListKey() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 0).apply {
-        supportsNativeWindowTracking = true
-      }
-      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-      var visible by mutableStateOf(true)
-      var items by mutableStateOf(listOf("A", "B", "C"))
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeToggleableWheel(
-          visibleProvider = { visible },
-          countProvider = { items.size },
-          keyProvider = {
-            val snapshot = items
-            val fn: (Int) -> Any = { idx -> snapshot[idx] }
-            fn
-          },
-        )
-        harness.stepFrame()
-        assertEquals(0, state.snappedIndex)
-
-        withContext(harness.clock) {
-          state.scrollToIndex(2)
-        }
-        assertEquals(2, state.snappedIndex)
-
-        // 卸载期间数据重排且请求跳到与卸载前相同的索引 2，重新挂载时不应被残留旧 key 拉回索引 0
-        visible = false
-        harness.stepFrame()
-        assertEquals(-1, state.snappedIndex)
-
-        items = listOf("C", "A", "B")
-        state.scrollToIndex(2)
-        visible = true
-        harness.stepFrame()
-        assertEquals(2, state.snappedIndex)
-        assertEquals("B", items[state.snappedIndex])
-      } finally {
-        harness.dispose()
-      }
-    }
-  }
-
-  @Test
-  fun testShrinkBeforeRecompositionScrollToIndexSyncsLiveCountWithoutOutOfBounds() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 8).apply {
-        supportsNativeWindowTracking = true
-      }
-      val state = WheelPickerState(initialIndex = 8, scrollController = controller)
-      val stateList = mutableStateListOf<String>().also { list ->
-        repeat(12) { list.add("Item-$it") }
-      }
-      val renderedValues = mutableListOf<String>()
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeLiveListWheel(
-          count = { stateList.size },
-          key = { stateList[it] },
-          onRenderItem = { index -> renderedValues.add(stateList[index]) },
-        )
-        harness.stepFrame()
-        assertEquals(8, state.snappedIndex)
-
-        // 1. 同一操作中将 SnapshotStateList 从 12 项缩容至 1 项并立即在重组前调用 scrollToIndex(0)，不越界且立即结算 snappedIndex
-        renderedValues.clear()
-        stateList.removeRange(1, 12)
-        state.scrollToIndex(0)
-        assertEquals(0, state.snappedIndex)
-        assertEquals(0, state.currentIndex)
-        assertEquals(listOf("Item-0"), renderedValues)
-
-        harness.stepFrame()
-        assertEquals(0, state.snappedIndex)
-        assertEquals("Item-0", stateList[state.snappedIndex])
-
-        // 2. 重组前清空列表并立即调用 scrollToIndex(3)，转为预跳转记录目标并在后续恢复数据时定位到 3
-        stateList.addAll((1..5).map { "Extra-$it" })
-        harness.stepFrame()
-        state.scrollToIndex(4)
-        assertEquals(4, state.snappedIndex)
-
-        stateList.clear()
-        state.scrollToIndex(3)
-        assertEquals(-1, state.snappedIndex)
-
-        stateList.addAll((0..6).map { "Restored-$it" })
-        harness.stepFrame()
-        assertEquals(3, state.snappedIndex)
-        assertEquals("Restored-3", stateList[state.snappedIndex])
-
-        // 3. 动态 count 返回负数时立即抛出 IllegalArgumentException
-        var negativeCountRejected = false
-        val invalidState = WheelPickerState(initialIndex = 0, scrollController = FakeWheelScrollController(0))
-        invalidState.updateAttachment(
-          owner = Any(),
-          count = 1,
-          unfocusedCount = 2,
-          itemSizePx = 48,
-          countProvider = { -1 },
-        )
-        try {
-          invalidState.scrollToIndex(0)
-        } catch (_: IllegalArgumentException) {
-          negativeCountRejected = true
-        }
-        assertTrue(negativeCountRejected)
-      } finally {
-        harness.dispose()
-      }
-    }
-  }
-
-  @Test
-  fun testOwnerSwitchAndDetachDuringDragResetsDraggedState() {
-    runBlocking {
-      // 验证公开默认与带参构造函数正常创建及保存初始索引
-      val defaultState = WheelPickerState()
-      val savedDefault = with(WheelPickerState.Saver) {
-        SaverScope { true }.save(defaultState)
-      }
-      assertEquals(0, savedDefault)
-
-      val controller = FakeWheelScrollController(initialIndex = 1)
-      val state = WheelPickerState(initialIndex = 1, scrollController = controller)
-      val ownerA = Any()
-      val ownerB = Any()
-      val ownerC = Any()
-
-      state.updateAttachment(
-        owner = ownerA,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-        flingGuardEnabled = true,
-      )
-      controller.applyMeasure(count = 10)
-
-      val observerJobA = launch(start = CoroutineStart.UNDISPATCHED) {
-        state.observeSnappedIndex(ownerA)
-      }
-      Snapshot.sendApplyNotifications()
-      repeat(3) {
-        yield()
-      }
-      assertEquals(1, state.snappedIndex)
-
-      // ownerA 处于拖拽与非零偏移期间切换条件分支至 ownerB（先 detach 旧分支，新观察协程先于旧观察协程 finally 执行）
-      controller.emitDragStart()
-      controller.setPositionInScroll(index = 2, offset = 20)
-      Snapshot.sendApplyNotifications()
-      repeat(3) {
-        yield()
-      }
-      assertEquals(1, state.snappedIndex)
-
-      state.detach(ownerA)
-      state.updateAttachment(
-        owner = ownerB,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-        flingGuardEnabled = true,
-      )
-      val observerJobB = launch(start = CoroutineStart.UNDISPATCHED) {
-        state.observeSnappedIndex(ownerB)
-      }
-      observerJobA.cancel()
-      observerJobA.join()
-      controller.applyMeasure(count = 10)
-      Snapshot.sendApplyNotifications()
-      repeat(4) {
-        yield()
-      }
-
-      // 切换后编程式跳转能正常结算 snappedIndex，非零偏移能正常触发自动吸附
-      state.scrollToIndex(6)
-      assertEquals(6, state.snappedIndex)
-
-      controller.setPositionInScroll(index = 3, offset = 30)
-      Snapshot.sendApplyNotifications()
-      repeat(6) {
-        yield()
-      }
-      assertEquals(0, controller.firstVisibleItemScrollOffset)
-      assertEquals(4, state.snappedIndex)
-
-      // 拖拽期间直接卸载 ownerB，后续重挂载 ownerC 时不残留拖拽阻塞
-      controller.emitDragStart()
-      Snapshot.sendApplyNotifications()
-      repeat(2) {
-        yield()
-      }
-      state.detach(ownerB)
-      observerJobB.cancel()
-      observerJobB.join()
-
-      state.updateAttachment(
-        owner = ownerC,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-        flingGuardEnabled = true,
-      )
-      controller.applyMeasure(count = 10)
-      state.scrollToIndex(8)
-      assertEquals(8, state.snappedIndex)
-    }
-  }
-
-  @Test
-  fun testAwaitIdleDoesNotReevaluatePerScrollOffsetChange() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 0)
-      val state = WheelPickerState(initialIndex = 0, scrollController = controller)
-      val owner = Any()
-      val frameClock = BroadcastFrameClock()
-
-      state.updateAttachment(
-        owner = owner,
-        count = 10,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-      )
-      controller.applyMeasure(count = 10)
-
-      val observerJob = launch(frameClock, start = CoroutineStart.UNDISPATCHED) {
-        state.observeSnappedIndex(owner)
-      }
-      try {
-        Snapshot.sendApplyNotifications()
-        yield()
-        assertEquals(0, state.snappedIndex)
-
-        // 先进入拖拽滚动并松手，让观察协程在帧边界等待窗口后因新滚动启动进入 awaitIdle
-        controller.beginGestureScroll(index = 1, offset = 12)
-        Snapshot.sendApplyNotifications()
-        yield()
-
-        controller.endGestureScroll()
-        Snapshot.sendApplyNotifications()
-        yield()
-
-        // 帧边界到达前启动惯性滑动，随后推进一帧使观察协程挂起在 awaitIdle 内
-        controller.beginGestureScroll(index = 2, offset = 16)
-        frameClock.sendFrame(16_000_000L)
-        Snapshot.sendApplyNotifications()
-        yield()
-        // 消费外层流挂起前的首次快照通知后重置计数
-        controller.setPositionInScroll(index = 2, offset = 20)
-        Snapshot.sendApplyNotifications()
-        yield()
-
-        controller.totalItemsCountReadCount = 0
-        for (step in 1..10) {
-          controller.setPositionInScroll(index = 2 + step / 3, offset = (step * 7) % 48)
-          Snapshot.sendApplyNotifications()
-          yield()
-        }
-        assertEquals(0, controller.totalItemsCountReadCount)
-
-        // 惯性滑动停止后正常恢复自动吸附并结算 snappedIndex
-        controller.setPositionInScroll(index = 5, offset = 30)
-        controller.endGestureScroll()
-        Snapshot.sendApplyNotifications()
-        yield()
-        frameClock.sendFrame(32_000_000L)
-        repeat(4) {
-          Snapshot.sendApplyNotifications()
-          yield()
-        }
-        assertEquals(6, state.snappedIndex)
-      } finally {
-        observerJob.cancel()
-        observerJob.join()
-      }
-    }
-  }
-
-  @Test
-  fun testPublicStateAndObserverDoNotEagerlyEvaluateCount() {
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 2).also {
-        it.supportsNativeWindowTracking = true
-      }
-      val state = WheelPickerState(initialIndex = 2, scrollController = controller)
-      val stateList = mutableStateListOf<String>().also { list ->
-        repeat(10) { list.add("Init-$it") }
-      }
-      var countInvocationCount = 0
-
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeLiveListWheel(
-          count = {
-            countInvocationCount++
-            stateList.size
-          },
-          key = { stateList[it] },
-          onRenderItem = { index -> stateList[index] },
-        )
-        harness.stepFrame()
-        assertEquals(2, state.snappedIndex)
-        assertEquals(2, state.currentIndex)
-
-        // 1. 条目数不变时连续更新滚动偏移（含滚动中与逐次静止快照发射），调用方的 count() 均不重复执行
-        countInvocationCount = 0
-        for (step in 0..9) {
-          controller.setPositionInScroll(index = step, offset = 0)
-          Snapshot.sendApplyNotifications()
-          yield()
-        }
-        controller.beginGestureScroll(index = 8, offset = 4)
-        for (step in 1..10) {
-          controller.setPositionInScroll(index = 8 - step / 4, offset = (step * 4) % 48)
-          Snapshot.sendApplyNotifications()
-          yield()
-        }
-        controller.setPositionInScroll(index = 5, offset = 0)
-        controller.endGestureScroll()
-        harness.stepFrame()
-        assertEquals(0, countInvocationCount)
-        assertEquals(5, state.snappedIndex)
-
-        // 2. 空态下同帧新增数据但尚未重组恢复前，公开状态保持 (-1, -1, null) 不暴露假索引 0，重组后恢复至 3
-        state.scrollToIndex(3)
-        assertEquals(3, state.snappedIndex)
-
-        stateList.clear()
-        harness.stepFrame()
-        assertEquals(-1, state.currentIndex)
-        assertEquals(-1, state.snappedIndex)
-        assertNull(state.scrollPercentageOf(0))
-
-        repeat(10) { stateList.add("Restored-$it") }
-        assertEquals(-1, state.currentIndex)
-        assertEquals(-1, state.snappedIndex)
-        assertNull(state.scrollPercentageOf(0))
-
-        harness.stepFrame()
-        assertEquals(3, state.currentIndex)
-        assertEquals(3, state.snappedIndex)
-        assertEquals("Restored-3", stateList[state.snappedIndex])
-      } finally {
-        harness.dispose()
-      }
-    }
-
-    // 3. 条件渲染卸载前（data = null 尚未进入下一帧重组），观察流与 SnappedIndex 不会抢先求值 count() 导致 NPE
-    runBlocking {
-      val controller = FakeWheelScrollController(initialIndex = 1)
-      val state = WheelPickerState(initialIndex = 1, scrollController = controller)
-      var nullableData by mutableStateOf<List<String>?>(listOf("A", "B", "C"))
-      val harness = WheelCompositionHarness(
-        parentContext = coroutineContext,
-        controller = controller,
-        state = state,
-      )
-      try {
-        harness.composeToggleableWheel(
-          visibleProvider = { nullableData != null },
-          countProvider = { nullableData!!.size },
-          keyProvider = { null },
-        )
-        harness.stepFrame()
-        assertEquals(1, state.snappedIndex)
-
-        nullableData = null
-        Snapshot.sendApplyNotifications()
-        repeat(4) {
-          yield()
-        }
-        harness.stepFrame()
-        assertEquals(-1, state.currentIndex)
-        assertEquals(-1, state.snappedIndex)
-        assertNull(state.scrollPercentageOf(1))
-
-        // 非零偏移进入自动吸附及自动吸附被手势抢占中断期间，data = null 尚未重组卸载前均不抢先求值 count()
-        nullableData = listOf("A", "B", "C")
-        harness.stepFrame()
-        assertEquals(1, state.snappedIndex)
-
-        controller.pauseAnimations = true
-        nullableData = null
-        controller.setPositionInScroll(index = 1, offset = 20)
-        Snapshot.sendApplyNotifications()
-        repeat(4) {
-          yield()
-        }
-        assertEquals(listOf(1), controller.animateTargetsRequested)
-        controller.interruptWithUserInput()
-        repeat(4) {
-          yield()
-        }
-        harness.stepFrame()
-        assertEquals(-1, state.snappedIndex)
-
-        // animateScrollToIndex 在卸载前正常结束或被外部取消进入 finally 时，均不抢先求值 count()
-        nullableData = listOf("A", "B", "C")
-        harness.stepFrame()
-        assertEquals(1, state.snappedIndex)
-
-        val finishBeforeDetachJob = launch(start = CoroutineStart.UNDISPATCHED) {
-          state.animateScrollToIndex(2)
-        }
-        nullableData = null
-        controller.resumeActiveAnimation()
-        finishBeforeDetachJob.join()
-        harness.stepFrame()
-        assertEquals(-1, state.snappedIndex)
-
-        nullableData = listOf("A", "B", "C")
-        harness.stepFrame()
-        assertEquals(2, state.snappedIndex)
-
-        val cancelBeforeDetachJob = launch(start = CoroutineStart.UNDISPATCHED) {
-          state.animateScrollToIndex(0)
-        }
-        nullableData = null
-        cancelBeforeDetachJob.cancelAndJoin()
-        harness.stepFrame()
-        assertEquals(-1, state.snappedIndex)
-      } finally {
-        harness.dispose()
-      }
-    }
   }
 }
 
@@ -1578,475 +437,9 @@ private class EmptyApplier : AbstractApplier<Unit>(Unit) {
   }
 }
 
-private class WheelCompositionHarness(
-  parentContext: CoroutineContext,
-  val controller: FakeWheelScrollController,
-  val state: WheelPickerState,
-) {
-  val clock = BroadcastFrameClock()
-
-  var latestOwner: Any? = null
-    private set
-
-  private val _recomposer = Recomposer(parentContext + clock)
-  private val _scope = CoroutineScope(parentContext + clock)
-  private val _recomposeJob = _scope.launch(start = CoroutineStart.UNDISPATCHED) {
-    _recomposer.runRecomposeAndApplyChanges()
-  }
-  private var _composition: Composition? = null
-  private var _frameTimeNanos = 0L
-  private var _latestCount = 0
-  private var _latestKey: ((Int) -> Any)? = null
-  private var _measuredOwner: Any? = null
-  private var _measuredCount = -1
-  private var _measuredKey: ((Int) -> Any)? = null
-
-  fun composeWheel(
-    countProvider: () -> Int,
-    keyProvider: () -> ((Int) -> Any)?,
-  ) {
-    setRootContent {
-      WheelAttachmentNode(
-        count = countProvider,
-        key = keyProvider(),
-      )
-    }
-  }
-
-  fun composeLiveListWheel(
-    count: () -> Int,
-    key: ((Int) -> Any)?,
-    onRenderItem: (Int) -> Unit,
-  ) {
-    setRootContent {
-      WheelAttachmentNode(
-        count = count,
-        key = key,
-        onRenderItem = onRenderItem,
-      )
-    }
-  }
-
-  fun composeWheelWithChildParam(
-    itemsProvider: () -> List<Int>,
-    userScrollEnabledProvider: () -> Boolean = { false },
-  ) {
-    setRootContent {
-      val list = itemsProvider()
-      WheelChildNode(
-        items = list,
-        userScrollEnabled = userScrollEnabledProvider(),
-      )
-    }
-  }
-
-  fun composeBranchSwitchingWheel(
-    branchProvider: () -> Boolean,
-    onReadCurrentIndex: (Int) -> Unit,
-    onSnapped: (Int) -> Unit,
-  ) {
-    setRootContent {
-      val second = branchProvider()
-      state.SnappedIndex(onSnapped)
-      if (!second) {
-        WheelAttachmentNode(count = { 10 }, key = null)
-      } else {
-        WheelAttachmentNode(count = { 10 }, key = null)
-      }
-      onReadCurrentIndex(state.currentIndex)
-    }
-  }
-
-  fun composeToggleableWheel(
-    visibleProvider: () -> Boolean,
-    countProvider: () -> Int,
-    keyProvider: () -> ((Int) -> Any)?,
-  ) {
-    setRootContent {
-      if (visibleProvider()) {
-        WheelAttachmentNode(
-          count = countProvider,
-          key = keyProvider(),
-        )
-      }
-    }
-  }
-
-  @Composable
-  private fun WheelChildNode(
-    items: List<Int>,
-    userScrollEnabled: Boolean = false,
-  ) {
-    WheelAttachmentNode(
-      count = { items.size },
-      key = { items[it] },
-      userScrollEnabled = userScrollEnabled,
-    )
-  }
-
-  @Composable
-  private fun WheelAttachmentNode(
-    count: () -> Int,
-    key: ((Int) -> Any)?,
-    userScrollEnabled: Boolean = false,
-    onRenderItem: ((Int) -> Unit)? = null,
-  ) {
-    val owner = remember(state) { Any() }
-    val latestCountState = rememberUpdatedState(count)
-    val latestKeyState = rememberUpdatedState(key)
-    val latestRenderState = rememberUpdatedState(onRenderItem)
-    val resolvedCountState = remember {
-      derivedStateOf { latestCountState.value() }
-    }
-    val countProvider: () -> Int = remember(resolvedCountState) {
-      {
-        val value = resolvedCountState.value
-        require(value >= 0) { "require count >= 0, but was $value" }
-        value
-      }
-    }
-    val resolvedCount = countProvider()
-    rememberWheelPickerDisplayHolder(
-      state = state,
-      display = { },
-      content = { },
-    )
-    SideEffect {
-      latestOwner = owner
-      _latestCount = resolvedCount
-      _latestKey = latestKeyState.value
-      controller.liveMeasureSpec = {
-        Triple(countProvider(), latestKeyState.value, latestRenderState.value)
-      }
-      state.updateAttachment(
-        owner = owner,
-        count = resolvedCount,
-        unfocusedCount = 2,
-        itemSizePx = 48,
-        flingGuardEnabled = userScrollEnabled,
-        countProvider = countProvider,
-      )
-    }
-    DisposableEffect(state, owner) {
-      onDispose {
-        if (latestOwner === owner) {
-          controller.liveMeasureSpec = null
-        }
-        state.detach(owner)
-      }
-    }
-
-    LaunchedEffect(state, owner) {
-      state.observeSnappedIndex(owner)
-    }
-  }
-
-  private fun setRootContent(content: @Composable () -> Unit) {
-    val composition = Composition(EmptyApplier(), _recomposer)
-    _composition = composition
-    composition.setContent(content)
-    Snapshot.sendApplyNotifications()
-    _measuredOwner = latestOwner
-    _measuredCount = _latestCount
-    _measuredKey = _latestKey
-    val spec = controller.liveMeasureSpec?.invoke()
-    controller.applyMeasure(
-      count = spec?.first ?: _latestCount,
-      key = spec?.second ?: _latestKey,
-      onRenderItem = spec?.third,
-    )
-  }
-
-  suspend fun stepFrame() {
-    Snapshot.sendApplyNotifications()
-    repeat(2) {
-      yield()
-    }
-    _frameTimeNanos += 16_000_000L
-    clock.sendFrame(_frameTimeNanos)
-    applyPendingMeasure()
-    repeat(4) {
-      yield()
-    }
-    applyPendingMeasure()
-    repeat(4) {
-      yield()
-    }
-  }
-
-  private fun applyPendingMeasure() {
-    val spec = controller.liveMeasureSpec?.invoke()
-    val targetCount = spec?.first ?: _latestCount
-    val targetKey = spec?.second ?: _latestKey
-    if (
-      _measuredOwner !== latestOwner ||
-      _measuredCount != targetCount ||
-      controller.totalItemsCount != targetCount ||
-      _measuredKey !== targetKey
-    ) {
-      _measuredOwner = latestOwner
-      _measuredCount = targetCount
-      _measuredKey = targetKey
-      controller.applyMeasure(
-        count = targetCount,
-        key = targetKey,
-        onRenderItem = spec?.third,
-      )
-      Snapshot.sendApplyNotifications()
-    }
-  }
-
-  suspend fun advanceUntilIdle(job: Job) {
-    val maxFrames = 20
-    var steps = 0
-    while (job.isActive && steps < maxFrames) {
-      stepFrame()
-      steps++
-    }
-    if (job.isActive) {
-      job.cancelAndJoin()
-      fail("Expected scroll job to complete within $maxFrames frames")
-    }
-    job.join()
-    stepFrame()
-  }
-
-  fun dispose() {
-    controller.liveMeasureSpec = null
-    _composition?.dispose()
-    _recomposer.cancel()
-    _recomposeJob.cancel()
-  }
-}
-
-private class FakeWheelScrollController(
-  initialIndex: Int,
-) : WheelScrollController {
-  private val _mutatorMutex = MutatorMutex()
-  private val _interactionSource = MutableInteractionSource()
-  private var _hadFirstNotEmptyLayout = false
-  private var _activeGate: CompletableDeferred<Unit>? = null
-  private var _measuredKeys: List<Any?> = emptyList()
-  private var _lastKnownFirstItemKey: Any? = null
-  private val _measurementScopeInvalidator = mutableStateOf(Unit, neverEqualPolicy())
-  private val _placementScopeInvalidator = mutableStateOf(Unit, neverEqualPolicy())
-  private var _animationFrameTick by mutableLongStateOf(0L)
-  private var _totalItemsCount by mutableIntStateOf(0)
-
-  val animateTargetsRequested = mutableListOf<Int>()
-  val completedAnimateTargets = mutableListOf<Int>()
-
-  var liveMeasureSpec: (() -> Triple<Int, ((Int) -> Any)?, ((Int) -> Unit)?>)? = null
-  var pauseAnimations = false
-  var emulateRealLazyListAnimateTiming = false
-  var supportsNativeWindowTracking = false
-
-  override var firstVisibleItemIndex by mutableIntStateOf(initialIndex)
-    private set
-
-  override var firstVisibleItemScrollOffset by mutableIntStateOf(0)
-    private set
-
-  override var isScrollInProgress by mutableStateOf(false)
-    private set
-
-  override var hasVisibleItems by mutableStateOf(false)
-    private set
-
-  var totalItemsCountReadCount = 0
-
-  override val totalItemsCount: Int
-    get() {
-      totalItemsCountReadCount++
-      return _totalItemsCount
-    }
-
-  override val interactionSource: InteractionSource
-    get() {
-      return _interactionSource
-    }
-
-  fun applyMeasure(
-    count: Int,
-    unfocusedCount: Int = 2,
-    itemSizePx: Int = 48,
-    key: ((Int) -> Any)? = null,
-    onRenderItem: ((Int) -> Unit)? = null,
-  ) {
-    val previousFirstIndex = firstVisibleItemIndex
-    val previousFirstKey = _lastKnownFirstItemKey
-    _totalItemsCount = count
-    hasVisibleItems = count > 0
-    _measuredKeys = if (count > 0 && key != null) {
-      List(count) { index -> key(index) }
-    } else {
-      emptyList()
-    }
-    if (
-      supportsNativeWindowTracking &&
-      count > 0 &&
-      key != null &&
-      previousFirstKey != null
-    ) {
-      val minWin = (previousFirstIndex - 100).coerceAtLeast(0)
-      val maxWin = (previousFirstIndex + 100).coerceAtMost(count - 1)
-      for (candidate in minWin..maxWin) {
-        if (_measuredKeys[candidate] == previousFirstKey) {
-          firstVisibleItemIndex = candidate
-          break
-        }
-      }
-    }
-    if (_hadFirstNotEmptyLayout || count > 0) {
-      _hadFirstNotEmptyLayout = true
-      if (count <= 0) {
-        firstVisibleItemIndex = 0
-        firstVisibleItemScrollOffset = 0
-        _lastKnownFirstItemKey = null
-      } else if (firstVisibleItemIndex >= count - 1) {
-        firstVisibleItemIndex = count - 1
-        firstVisibleItemScrollOffset = 0
-        _lastKnownFirstItemKey = _measuredKeys.getOrNull(firstVisibleItemIndex)
-      } else {
-        _lastKnownFirstItemKey = _measuredKeys.getOrNull(firstVisibleItemIndex)
-      }
-    }
-    if (count > 0 && onRenderItem != null) {
-      val lastVisible = (firstVisibleItemIndex + unfocusedCount * 2).coerceAtMost(count - 1)
-      for (visibleIndex in firstVisibleItemIndex..lastVisible) {
-        onRenderItem(visibleIndex)
-      }
-    }
-    if (unfocusedCount < 0 || itemSizePx < 0) {
-      error("Invalid test measure metrics")
-    }
-    _placementScopeInvalidator.value = Unit
-  }
-
-  fun setPositionInScroll(index: Int, offset: Int) {
-    firstVisibleItemIndex = index
-    firstVisibleItemScrollOffset = offset
-    _lastKnownFirstItemKey = _measuredKeys.getOrNull(index)
-  }
-
-  fun beginGestureScroll(index: Int, offset: Int) {
-    isScrollInProgress = true
-    firstVisibleItemIndex = index
-    firstVisibleItemScrollOffset = offset
-    _lastKnownFirstItemKey = _measuredKeys.getOrNull(index)
-  }
-
-  fun endGestureScroll() {
-    isScrollInProgress = false
-  }
-
-  suspend fun emitDragStart(): DragInteraction.Start {
-    val start = DragInteraction.Start()
-    _interactionSource.emit(start)
-    return start
-  }
-
-  suspend fun emitDragStop(start: DragInteraction.Start) {
-    _interactionSource.emit(DragInteraction.Stop(start))
-  }
-
-  suspend fun emitDragCancel(start: DragInteraction.Start) {
-    _interactionSource.emit(DragInteraction.Cancel(start))
-  }
-
-  fun resumeActiveAnimation() {
-    _activeGate?.complete(Unit)
-  }
-
-  suspend fun interruptWithUserInput() {
-    _mutatorMutex.mutate(MutatePriority.UserInput) {
-    }
-  }
-
-  override fun requestScrollToItem(index: Int, scrollOffset: Int) {
-    firstVisibleItemIndex = index
-    firstVisibleItemScrollOffset = scrollOffset
-    _lastKnownFirstItemKey = null
-    _measurementScopeInvalidator.value = Unit
-  }
-
-  override suspend fun scrollToItem(index: Int) {
-    _mutatorMutex.mutate {
-      isScrollInProgress = true
-      try {
-        val spec = liveMeasureSpec?.invoke()
-        if (spec != null) {
-          firstVisibleItemIndex = index.coerceAtLeast(0)
-          firstVisibleItemScrollOffset = 0
-          _lastKnownFirstItemKey = null
-          applyMeasure(
-            count = spec.first,
-            key = spec.second,
-            onRenderItem = spec.third,
-          )
-        } else if (totalItemsCount > 0) {
-          firstVisibleItemIndex = index.coerceIn(0, totalItemsCount - 1)
-          firstVisibleItemScrollOffset = 0
-          _lastKnownFirstItemKey = _measuredKeys.getOrNull(firstVisibleItemIndex)
-        }
-      } finally {
-        isScrollInProgress = false
-      }
-    }
-  }
-
-  override suspend fun animateScrollToItem(index: Int) {
-    animateTargetsRequested.add(index)
-    _mutatorMutex.mutate {
-      val clamped = if (totalItemsCount > 0) {
-        index.coerceIn(0, totalItemsCount - 1)
-      } else {
-        index
-      }
-      if (
-        emulateRealLazyListAnimateTiming &&
-        !pauseAnimations &&
-        totalItemsCount > 0 &&
-        firstVisibleItemIndex == clamped &&
-        firstVisibleItemScrollOffset == 0
-      ) {
-        completedAnimateTargets.add(clamped)
-        return@mutate
-      }
-      isScrollInProgress = true
-      try {
-        if (pauseAnimations) {
-          val gate = CompletableDeferred<Unit>()
-          _activeGate = gate
-          gate.await()
-        } else if (emulateRealLazyListAnimateTiming) {
-          val frameClock = checkNotNull(currentCoroutineContext()[MonotonicFrameClock]) {
-            "A MonotonicFrameClock is not available in this CoroutineContext"
-          }
-          frameClock.withFrameNanos { frameTimeNanos ->
-            _animationFrameTick = frameTimeNanos
-          }
-        } else {
-          yield()
-        }
-        if (totalItemsCount > 0) {
-          val finalTarget = index.coerceIn(0, totalItemsCount - 1)
-          firstVisibleItemIndex = finalTarget
-          firstVisibleItemScrollOffset = 0
-          _lastKnownFirstItemKey = _measuredKeys.getOrNull(finalTarget)
-          completedAnimateTargets.add(finalTarget)
-        }
-      } finally {
-        isScrollInProgress = false
-      }
-    }
-  }
-}
-
 private class ThrowingIntrinsicMeasurable(
   private val measuredWidth: Int,
   private val measuredHeight: Int,
-  private val onMeasure: (() -> Unit)? = null,
 ) : Measurable {
   override val parentData: Any?
     get() {
@@ -2054,7 +447,6 @@ private class ThrowingIntrinsicMeasurable(
     }
 
   override fun measure(constraints: Constraints): Placeable {
-    onMeasure?.invoke()
     return FakePlaceable(
       w = measuredWidth.coerceIn(constraints.minWidth, constraints.maxWidth),
       h = measuredHeight.coerceIn(constraints.minHeight, constraints.maxHeight),

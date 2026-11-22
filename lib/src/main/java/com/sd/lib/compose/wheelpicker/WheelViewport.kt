@@ -22,8 +22,6 @@ import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
-import androidx.compose.ui.layout.Placeable
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -120,29 +118,6 @@ internal class WheelViewportState(
     return safeUnfocusedCount
   }
 
-  /** 按列表本次收到的主轴约束计算并绑定内边距后测量列表节点 */
-  fun measureList(
-    measurable: Measurable,
-    constraints: Constraints,
-    density: Density,
-    orientation: WheelOrientation,
-    itemSizePx: Int,
-  ): Placeable {
-    val mainAxisPx = orientation.maxMainAxisSize(constraints)
-    val paddingDp = if (mainAxisPx == Constraints.Infinity) {
-      null
-    } else {
-      val paddingPx = ((mainAxisPx - itemSizePx) / 2).coerceAtLeast(0)
-      with(density) { paddingPx.toDp() }
-    }
-    return _paddingValues.measureList(
-      measurable = measurable,
-      constraints = constraints,
-      orientation = orientation,
-      paddingDp = paddingDp,
-    )
-  }
-
   fun updateClip(clip: Boolean) {
     Snapshot.withoutReadObservation {
       if (shouldClip != clip) {
@@ -159,8 +134,6 @@ private class WheelPaddingValues(
 ) : PaddingValues {
   private var _orientation by mutableStateOf(orientation)
   private var _paddingDp by mutableStateOf(paddingDp)
-  private var _activeOrientation: WheelOrientation? = null
-  private var _activePaddingDp: Dp? = null
 
   fun update(
     orientation: WheelOrientation,
@@ -176,46 +149,20 @@ private class WheelPaddingValues(
     }
   }
 
-  fun measureList(
-    measurable: Measurable,
-    constraints: Constraints,
-    orientation: WheelOrientation,
-    paddingDp: Dp?,
-  ): Placeable {
-    val previousOrientation = _activeOrientation
-    val previousPaddingDp = _activePaddingDp
-    _activeOrientation = orientation
-    _activePaddingDp = paddingDp
-    return try {
-      measurable.measure(constraints)
-    } finally {
-      _activeOrientation = previousOrientation
-      _activePaddingDp = previousPaddingDp
-    }
-  }
-
   override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp {
-    return if (currentOrientation() == WheelOrientation.Horizontal) currentPaddingDp() else 0.dp
+    return if (_orientation == WheelOrientation.Horizontal) _paddingDp else 0.dp
   }
 
   override fun calculateTopPadding(): Dp {
-    return if (currentOrientation() == WheelOrientation.Vertical) currentPaddingDp() else 0.dp
+    return if (_orientation == WheelOrientation.Vertical) _paddingDp else 0.dp
   }
 
   override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp {
-    return if (currentOrientation() == WheelOrientation.Horizontal) currentPaddingDp() else 0.dp
+    return if (_orientation == WheelOrientation.Horizontal) _paddingDp else 0.dp
   }
 
   override fun calculateBottomPadding(): Dp {
-    return if (currentOrientation() == WheelOrientation.Vertical) currentPaddingDp() else 0.dp
-  }
-
-  private fun currentOrientation(): WheelOrientation {
-    return _activeOrientation ?: _orientation
-  }
-
-  private fun currentPaddingDp(): Dp {
-    return _activePaddingDp ?: _paddingDp
+    return if (_orientation == WheelOrientation.Vertical) _paddingDp else 0.dp
   }
 }
 
@@ -300,13 +247,7 @@ internal fun createWheelViewportMeasurePolicy(
         )
       }
 
-      val listPlaceable = viewportState.measureList(
-        measurable = measurables[0],
-        constraints = listConstraints,
-        density = this,
-        orientation = orientation,
-        itemSizePx = itemSizePx,
-      )
+      val listPlaceable = measurables[0].measure(listConstraints)
       val layoutWidth: Int
       val layoutHeight: Int
       val focusConstraints: Constraints
@@ -393,26 +334,6 @@ internal fun createWheelViewportMeasurePolicy(
         WheelOrientation.Vertical -> calculateIntrinsicMainAxisPx(itemSizePx = itemSizePx, unfocusedCount = unfocusedCount)
         WheelOrientation.Horizontal -> measurables.getOrNull(1)?.maxIntrinsicHeight(itemSizePx) ?: 0
       }
-    }
-  }
-}
-
-/** 在列表自身重测时按本次收到的主轴约束同步绑定首尾内边距 */
-internal fun Modifier.bindViewportListPadding(
-  viewportState: WheelViewportState,
-  orientation: WheelOrientation,
-  itemSizePx: Int,
-): Modifier {
-  return layout { measurable, constraints ->
-    val placeable = viewportState.measureList(
-      measurable = measurable,
-      constraints = constraints,
-      density = this,
-      orientation = orientation,
-      itemSizePx = itemSizePx,
-    )
-    layout(placeable.width, placeable.height) {
-      placeable.placeRelative(0, 0)
     }
   }
 }
