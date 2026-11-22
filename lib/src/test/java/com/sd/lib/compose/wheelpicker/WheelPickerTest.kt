@@ -247,60 +247,55 @@ class WheelPickerTest {
   }
 
   @Test
-  fun testScrollBeforeAttachAndBeforeFirstLayoutDoesNotSuspend() {
+  fun testPreJumpWhileDetachedOrEmptyDoesNotSuspend() {
     runBlocking {
       withTimeout(5.seconds) {
         val state = WheelPickerState(initialIndex = 0)
         state.scrollToIndex(6)
         assertEquals(-1, state.snappedIndex)
 
-        var liveCount = 10
         val owner = Any()
         state.updateAttachment(
           owner = owner,
-          count = liveCount,
+          count = 10,
           unfocusedCount = 2,
           itemSizePx = 48,
-          countProvider = { liveCount },
         )
         assertEquals(6, state.currentIndex)
         assertEquals(6, state.snappedIndex)
 
-        // 已挂载但尚未完成首次测量时，调用 scrollToIndex / animateScrollToIndex 均不挂起并同步最新 count
-        state.scrollToIndex(3)
-        assertEquals(3, state.currentIndex)
-        assertEquals(3, state.snappedIndex)
-
-        liveCount = 15
-        state.animateScrollToIndex(12)
-        assertEquals(12, state.currentIndex)
-        assertEquals(12, state.snappedIndex)
-
-        // count == 0 时调用 animateScrollToIndex 同样不阻塞且覆盖待恢复位置
-        liveCount = 0
+        // count == 0 时调用 animateScrollToIndex 不挂起且覆盖待恢复位置
+        state.updateAttachment(
+          owner = owner,
+          count = 0,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+        )
         state.animateScrollToIndex(8)
         assertEquals(-1, state.snappedIndex)
 
-        liveCount = 10
         state.updateAttachment(
           owner = owner,
-          count = liveCount,
+          count = 10,
           unfocusedCount = 2,
           itemSizePx = 48,
-          countProvider = { liveCount },
         )
         assertEquals(8, state.currentIndex)
         assertEquals(8, state.snappedIndex)
 
-        // 动态 count 返回负数时立即抛出 IllegalArgumentException
-        liveCount = -1
-        var negativeRejected = false
-        try {
-          state.scrollToIndex(0)
-        } catch (_: IllegalArgumentException) {
-          negativeRejected = true
-        }
-        assertTrue(negativeRejected)
+        // 卸载后预跳转超出后续挂载条目数时自动夹紧至边界
+        state.detach(owner)
+        state.animateScrollToIndex(20)
+        assertEquals(-1, state.snappedIndex)
+
+        state.updateAttachment(
+          owner = owner,
+          count = 10,
+          unfocusedCount = 2,
+          itemSizePx = 48,
+        )
+        assertEquals(9, state.currentIndex)
+        assertEquals(9, state.snappedIndex)
       }
     }
   }
@@ -375,7 +370,7 @@ class WheelPickerTest {
       }
     }
 
-    // 验证视口测量阶段更新内边距、裁剪与单侧未选中条目数时不触发快照读观测，且预测测量不污染实际状态
+    // 验证视口测量阶段更新内边距、裁剪与单侧未选中条目数时不触发快照读观测
     val observeState = WheelPickerState(initialIndex = 2)
     val observeOwner = Any()
     observeState.updateAttachment(
@@ -402,7 +397,6 @@ class WheelPickerTest {
         )
       },
     )
-    val lookaheadScope = FakeMeasureScope(backingDensity = density, isLookingAhead = true)
     val observeScope = FakeMeasureScope(backingDensity = density)
     val observeList = ThrowingIntrinsicMeasurable(measuredWidth = 80, measuredHeight = 48)
     val observeFocus = FakeBoxMeasurable(intrinsicCrossSize = 72)
@@ -410,7 +404,6 @@ class WheelPickerTest {
     Snapshot.observe(readObserver = { measureObservedReads.add(it) }) {
       with(observePolicy) {
         observeScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 20))
-        lookaheadScope.measure(listOf(observeList, observeFocus), Constraints.fixed(80, 240))
       }
     }
     assertTrue(measureObservedReads.isEmpty())
@@ -527,7 +520,6 @@ private class FakePlaceable(
 
 private class FakeMeasureScope(
   private val backingDensity: Density,
-  override val isLookingAhead: Boolean = false,
 ) : MeasureScope, IntrinsicMeasureScope {
   override val density: Float
     get() {

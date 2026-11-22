@@ -15,6 +15,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -765,17 +766,25 @@ class WheelPickerInstrumentedTest {
   }
 
   @Test
-  fun testDynamicMutateListAndImmediateScrollToIndex() {
+  fun testDynamicMutateListAndScrollToIndex() {
     val stateList = mutableStateListOf<String>().also { list ->
       repeat(12) { list.add("StateItem-$it") }
     }
     var boxedItems by mutableStateOf((0..11).map { "BoxedItem-$it" })
-    val verticalState = WheelPickerState(initialIndex = 8)
-    val horizontalState = WheelPickerState(initialIndex = 8)
-    lateinit var composeScope: CoroutineScope
+    var targetJump by mutableStateOf<Int?>(8)
+    val verticalState = WheelPickerState(initialIndex = 0)
+    val horizontalState = WheelPickerState(initialIndex = 0)
 
     composeRule.setContent {
-      composeScope = rememberCoroutineScope()
+      LaunchedEffect(stateList.size, targetJump) {
+        val target = targetJump ?: return@LaunchedEffect
+        verticalState.animateScrollToIndex(target)
+      }
+
+      LaunchedEffect(boxedItems.size, targetJump) {
+        val target = targetJump ?: return@LaunchedEffect
+        horizontalState.scrollToIndex(target)
+      }
 
       VerticalWheelPicker(
         count = { stateList.size },
@@ -802,17 +811,11 @@ class WheelPickerInstrumentedTest {
     assertEquals(8, verticalState.snappedIndex)
     assertEquals(8, horizontalState.snappedIndex)
 
-    // 1. 同一操作中将 12 项缩容至 1 项并立即启动 scrollToIndex(0)
+    // 1. 将 12 项缩容至 1 项并联动跳转至 0
     composeRule.runOnUiThread {
       stateList.removeRange(1, 12)
-      composeScope.launch {
-        verticalState.scrollToIndex(0)
-      }
-
       boxedItems = listOf("BoxedItem-0")
-      composeScope.launch {
-        horizontalState.scrollToIndex(0)
-      }
+      targetJump = 0
     }
     composeRule.waitForIdle()
     assertEquals(0, verticalState.snappedIndex)
@@ -823,19 +826,13 @@ class WheelPickerInstrumentedTest {
     assertEquals("BoxedItem-0", boxedItems[horizontalState.snappedIndex])
     composeRule.onNodeWithText("BoxedItem-0").assertIsSelected()
 
-    // 2. 从 1 项扩容至 12 项并立即启动 animateScrollToIndex(11)
+    // 2. 从 1 项扩容至 12 项并联动跳转至 11
     composeRule.runOnUiThread {
       for (index in 1..11) {
         stateList.add("StateItem-$index")
       }
-      composeScope.launch {
-        verticalState.animateScrollToIndex(11)
-      }
-
       boxedItems = (0..11).map { "BoxedItem-$it" }
-      composeScope.launch {
-        horizontalState.animateScrollToIndex(11)
-      }
+      targetJump = 11
     }
     composeRule.waitForIdle()
     assertEquals(11, verticalState.snappedIndex)

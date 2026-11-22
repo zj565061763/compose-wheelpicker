@@ -59,8 +59,6 @@ internal class WheelViewportState(
   itemSizePx: Int,
   initialUnfocusedCount: Int,
 ) {
-  private var _lastMaxMainAxisPx = Constraints.Infinity
-
   private val _paddingValues = WheelPaddingValues(
     orientation = orientation,
     paddingDp = calculatePaddingDp(
@@ -78,43 +76,27 @@ internal class WheelViewportState(
   var shouldClip by mutableStateOf(false)
     private set
 
-  /** 按最近一次主轴约束像素上限计算安全的单侧未选中条目数 */
-  fun resolveUnfocusedCount(
-    itemSizePx: Int,
-    requestedUnfocusedCount: Int,
-  ): Int {
-    return calculateSafeUnfocusedCount(
-      maxSizePx = _lastMaxMainAxisPx,
-      itemSizePx = itemSizePx,
-      unfocusedCount = requestedUnfocusedCount,
-    )
-  }
-
-  /** 记录主轴约束上限，收缩单侧未选中条目数并在实际测量阶段更新首尾内边距 */
+  /** 根据主轴约束上限收缩单侧未选中条目数并同步首尾内边距 */
   fun onMeasure(
     orientation: WheelOrientation,
     density: Density,
     maxMainAxisPx: Int,
     itemSizePx: Int,
     requestedUnfocusedCount: Int,
-    isLookingAhead: Boolean = false,
   ): Int {
     val safeUnfocusedCount = calculateSafeUnfocusedCount(
       maxSizePx = maxMainAxisPx,
       itemSizePx = itemSizePx,
       unfocusedCount = requestedUnfocusedCount,
     )
-    if (!isLookingAhead) {
-      _lastMaxMainAxisPx = maxMainAxisPx
-      _paddingValues.update(
-        orientation = orientation,
-        paddingDp = calculatePaddingDp(
-          density = density,
-          itemSizePx = itemSizePx,
-          unfocusedCount = safeUnfocusedCount,
-        ),
-      )
-    }
+    _paddingValues.update(
+      orientation = orientation,
+      paddingDp = calculatePaddingDp(
+        density = density,
+        itemSizePx = itemSizePx,
+        unfocusedCount = safeUnfocusedCount,
+      ),
+    )
     return safeUnfocusedCount
   }
 
@@ -224,11 +206,8 @@ internal fun createWheelViewportMeasurePolicy(
         maxMainAxisPx = maxMainAxisPx,
         itemSizePx = itemSizePx,
         requestedUnfocusedCount = unfocusedCount,
-        isLookingAhead = isLookingAhead,
       )
-      if (!isLookingAhead) {
-        onResolvedUnfocusedCount(safeUnfocusedCount)
-      }
+      onResolvedUnfocusedCount(safeUnfocusedCount)
 
       val viewportMainAxisPx = itemSizePx * (safeUnfocusedCount * 2 + 1)
       val listConstraints = when (orientation) {
@@ -276,14 +255,12 @@ internal fun createWheelViewportMeasurePolicy(
       }
 
       val focusPlaceable = measurables[1].measure(focusConstraints)
-      if (!isLookingAhead) {
-        viewportState.updateClip(
-          clip = layoutWidth < listPlaceable.width ||
-            layoutHeight < listPlaceable.height ||
-            layoutWidth < focusPlaceable.width ||
-            layoutHeight < focusPlaceable.height,
-        )
-      }
+      viewportState.updateClip(
+        clip = layoutWidth < listPlaceable.width ||
+          layoutHeight < listPlaceable.height ||
+          layoutWidth < focusPlaceable.width ||
+          layoutHeight < focusPlaceable.height,
+      )
 
       val listX = (layoutWidth - listPlaceable.width) / 2
       val listY = (layoutHeight - listPlaceable.height) / 2

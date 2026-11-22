@@ -18,13 +18,10 @@ internal class WheelPositionStore(
   initialIndex: Int,
   private val lazyListState: LazyListState,
 ) {
-  private var _countProvider: (() -> Int)? = null
   private var _unfocusedCount by mutableIntStateOf(0)
   private var _reverseVisualDirection by mutableStateOf(false)
 
   var lastKnownIndex = initialIndex.coerceAtLeast(0)
-
-  var pendingTargetIndex: Int? = null
 
   var attachment by mutableStateOf<WheelAttachment?>(null)
     private set
@@ -96,15 +93,15 @@ internal class WheelPositionStore(
     unfocusedCount: Int,
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
-    countProvider: (() -> Int)? = null,
   ) {
     val previousAttachment = attachment
-    _unfocusedCount = unfocusedCount
+    if (previousAttachment?.owner !== owner) {
+      _unfocusedCount = unfocusedCount
+    }
     _reverseVisualDirection = reverseVisualDirection
-    _countProvider = countProvider
 
     if (count <= 0) {
-      recordLiveIndexIfNoPending(previousAttachment)
+      updateLastKnownIndexFromLive(previousAttachment)
       attachment = WheelAttachment(owner = owner, count = 0, itemSizePx = itemSizePx)
       snappedIndex = -1
       return
@@ -116,19 +113,10 @@ internal class WheelPositionStore(
 
     var restoredTarget: Int? = null
     if (wasInactiveOrSwitched) {
-      val rawTarget = pendingTargetIndex ?: lastKnownIndex
-      val restoreTarget = rawTarget.coerceIn(0, count - 1)
-      pendingTargetIndex = null
+      val restoreTarget = lastKnownIndex.coerceIn(0, count - 1)
       lastKnownIndex = restoreTarget
       restoredTarget = restoreTarget
       lazyListState.requestScrollToItem(index = restoreTarget, scrollOffset = 0)
-    } else {
-      val pending = pendingTargetIndex
-      if (pending != null) {
-        val clampedTarget = pending.coerceIn(0, count - 1)
-        pendingTargetIndex = clampedTarget
-        lastKnownIndex = clampedTarget
-      }
     }
 
     attachment = WheelAttachment(owner = owner, count = count, itemSizePx = itemSizePx)
@@ -146,32 +134,13 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 从挂载的条目数提供者同步最新条目总数 */
-  fun syncLiveCount() {
-    val current = attachment ?: return
-    val provider = _countProvider ?: return
-    val liveCount = provider()
-    require(liveCount >= 0) { "require count >= 0, but was $liveCount" }
-    if (liveCount != current.count) {
-      updateAttachment(
-        owner = current.owner,
-        count = liveCount,
-        unfocusedCount = _unfocusedCount,
-        itemSizePx = current.itemSizePx,
-        reverseVisualDirection = _reverseVisualDirection,
-        countProvider = provider,
-      )
-    }
-  }
-
   /** 卸载[owner]绑定的滚轮，保存最近有效索引并重置挂载与吸附状态 */
   fun detach(owner: Any) {
     val current = attachment
     if (current?.owner !== owner) {
       return
     }
-    recordLiveIndexIfNoPending(current)
-    _countProvider = null
+    updateLastKnownIndexFromLive(current)
     attachment = null
     snappedIndex = -1
   }
@@ -180,13 +149,9 @@ internal class WheelPositionStore(
     snappedIndex = -1
   }
 
-  fun updateSnappedIndex(index: Int) {
-    snappedIndex = index
-  }
-
   /** 布局已同步时将实时中心索引记录为最近已知位置 */
-  fun updateLastKnownIndexFromLive() {
-    if (hasSyncedLivePosition()) {
+  fun updateLastKnownIndexFromLive(target: WheelAttachment? = attachment) {
+    if (hasSyncedLivePosition(target)) {
       val liveIndex = currentIndex
       if (liveIndex >= 0) {
         lastKnownIndex = liveIndex
@@ -194,33 +159,20 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 滚轮静止且布局同步后按当前中心条目结算吸附索引 */
-  fun onIdleSettled(owner: Any) {
-    val finalAttachment = attachment
-    if (finalAttachment?.owner !== owner) {
+  /** 滚轮静止、布局已同步且首项零偏移对齐时结算吸附索引 */
+  fun settleCurrentIndex(owner: Any? = attachment?.owner) {
+    val current = attachment
+    if (current == null || current.owner !== owner) {
       return
     }
-    if (finalAttachment.count <= 0) {
+    if (current.count <= 0) {
       snappedIndex = -1
       return
     }
     if (!isIdleAndLayoutSynced(owner = owner)) {
       return
     }
-    val settled = currentIndex
-    snappedIndex = settled
-    if (settled >= 0) {
-      lastKnownIndex = settled
-    }
-  }
-
-  /** 滚轮静止且首项零像素偏移对齐时结算吸附索引 */
-  fun settleCurrentIndexIfAligned() {
-    if (!isIdleAndLayoutSynced()) {
-      return
-    }
-    val layoutInfo = lazyListState.layoutInfo
-    if (layoutInfo.visibleItemsInfo.isNotEmpty() && lazyListState.firstVisibleItemScrollOffset != 0) {
+    if (lazyListState.layoutInfo.visibleItemsInfo.isNotEmpty() && lazyListState.firstVisibleItemScrollOffset != 0) {
       return
     }
     val settled = currentIndex
@@ -230,12 +182,8 @@ internal class WheelPositionStore(
     }
   }
 
-  /** 按待生效目标、实时中心项或最近已知位置返回待保存索引 */
+  /** 优先返回已同步布局的实时中心索引，否则返回最近已知索引 */
   fun saveIndex(): Int {
-    val pending = pendingTargetIndex
-    if (pending != null) {
-      return pending.coerceAtLeast(0)
-    }
     if (hasSyncedLivePosition()) {
       val live = currentIndex
       if (live >= 0) {
@@ -250,14 +198,5 @@ internal class WheelPositionStore(
       target.count > 0 &&
       lazyListState.layoutInfo.totalItemsCount > 0 &&
       isLayoutSyncedWith(target.count)
-  }
-
-  private fun recordLiveIndexIfNoPending(target: WheelAttachment?) {
-    if (pendingTargetIndex == null && hasSyncedLivePosition(target)) {
-      val liveIndex = currentIndex
-      if (liveIndex >= 0) {
-        lastKnownIndex = liveIndex
-      }
-    }
   }
 }

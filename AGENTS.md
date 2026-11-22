@@ -60,7 +60,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 单实例与空态语义：同一个 `WheelPickerState` 同时只能绑定一个滚轮，未挂载或 `count == 0` 时 `currentIndex` 与 `snappedIndex` 均为 `-1`、`scrollPercentageOf` 返回 `null`。
 - 视觉方向符号：RTL 布局下的水平滚轮与 `reverseLayout = true` 需保持 `scrollPercentageOf` 视觉方向符号一致。
 - 离手衔接与静止自动归位：禁用默认 `overscrollEffect`，滚动刚停止且处于非零像素偏移时先等待一帧边界并让出调度以衔接常规惯性滑动，仍停留在非零偏移时自动归位至最近条目并更新 `snappedIndex`。
-- 预跳转：未挂载、空数据或首次测量完成前调用 `scrollToIndex` / `animateScrollToIndex` 不挂起，通过 `requestScrollToItem` 记录目标并在非空挂载测量后限制在 `0..<count` 内生效；常规并发滚动抢占直接委托给底层 `LazyListState` 的 `MutatorMutex`。
+- 预跳转：未挂载或空数据时调用 `scrollToIndex` / `animateScrollToIndex` 不挂起，通过 `requestScrollToItem` 记录目标并在非空挂载测量后限制在 `0..<count` 内生效；已挂载非空时直接委托给底层 `LazyListState` 的 `scrollToItem` / `animateScrollToItem`。
 - 缩容边界收敛：列表缩容导致 `snappedIndex >= count` 时先将上一轮吸附值立即夹紧至 `count - 1`，避免覆盖底层存活稳定 `key` 锚点，待新列表完成测量且滚动静止后再按实际中心项更新 `snappedIndex`。
 
 ## 设计取舍与代码审查约定
@@ -71,9 +71,8 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 
 以下具体取舍均属有意设计，代码审查不得作为缺陷或功能缺失报告：
 
-- `count` 惰性求值与 `key` 底层透传：`VerticalWheelPicker` 与 `HorizontalWheelPicker` 接收 `count: () -> Int` 在组合期、`LazyListScope` 与编程式滚动执行前读取最新条目数，`key` 参数直接透传给底层 `LazyList`，由 `LazyListState` 原生最近邻窗口（约 ±100 项）保持可见锚点，再由 `WheelSnapObserver` 在静止时同步 `snappedIndex`。
-- 不在公开状态读取与内部观察流中主动求值 `count()`：与官方 `PagerState` 一致，`currentIndex`、`snappedIndex`、`scrollPercentageOf` 及 `WheelSnapObserver` 仅基于已同步的挂载计数计算，修改列表后未完成重组或跳转前读取公开状态仍为上一轮已同步值。
-- 不兜底混用实时 `count` 与旧列表快照的越界：与官方 `Pager` 一致，同帧更新数据并在重组前立即跳转时，调用方需在 `count`、`key` 与 `content` 的 lambda 内读取同一列表状态，库层不为混用实时条目数与重组期捕获的不可变列表导致的越界提供兜底。
+- `count` 惰性求值与 `key` 底层透传：`VerticalWheelPicker` 与 `HorizontalWheelPicker` 接收 `count: () -> Int` 在组合期与 `LazyListScope` 内读取条目数，`key` 参数直接透传给底层 `LazyList`，由 `LazyListState` 原生最近邻窗口（约 ±100 项）保持可见锚点，再由 `WheelSnapObserver` 在静止时同步 `snappedIndex`。
+- 不在重组前提前求值 `count()`：状态属性、观察流与编程式滚动统一基于组合期已同步的挂载计数计算，修改数据后未完成重组时读取公开状态仍为上一轮已同步值，扩容后需在重组生效后（如 `LaunchedEffect`）再跳转至新增索引。
 - 不兜底或额外说明非可观察的 `count` 数据源：与官方 `LazyColumn` 及 `rememberPagerState` 一致，动态数据使用 Compose 可观察状态属通用前提，既不为直接裸读 `StateFlow.value` 或普通可变集合等非可观察数据源增加兜底，也不在 `count` 的公开 KDoc 中额外说明该前提。
 - 不支持单个 `WheelPickerState` 同时挂载多个滚轮实例：与官方 `LazyListState` 及 `PagerState` 一致，仅支持单实例挂载与常规 `if / else` 条件分支顺序切换，不为 `AnimatedContent`、`Crossfade` 等过渡期新旧实例并存共享同一 `state` 做多实例状态转存或协同。
 - 编程式滚动并发与中断对齐 `LazyListState`：不维护独立的请求 ID、子协程包装或自定义取消吞吐，并发抢占、手势打断与组件切换中断统一遵循底层 `LazyListState` 原生行为。
@@ -82,7 +81,7 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 - 不支持逐项独立 `MutableState` 暗中突变：不支持在稳定 `key` 闭包内用每个条目独立的 `MutableState` 原地改值却不触发列表重组，数据变更需通过不可变列表重组或 `SnapshotStateList` 结构修改驱动。
 - 不跨空列表或重挂载记忆旧 `key`：列表变空（`count() == 0`）或组件卸载重挂载后统一按最近已知索引恢复并限制在新 `0..<count` 范围内，重新挂载时重置底层残留锚点。
 - 不维护额外的缩容末项像素偏移修正：列表主轴可用空间恒不小于单个条目尺寸，缩容后末项正偏移回拉归零交由 `LazyListMeasure` 原生滚动回退处理，不在状态层或观察流中额外调用 `requestScrollToItem` 干预。
-- 不为 `LookaheadScope` 尺寸伸缩动画维护双轨内边距：滚轮视口内边距直接由实际测量阶段按安全 `unfocusedCount` 更新，不为对滚轮自身施加 `animateBounds` 且动画途中并发调用 `scrollToIndex` 的低频场景维护测量栈覆盖修饰符。
+- 不为 `LookaheadScope` 维护独立测量分支：视口测量不区分 `isLookingAhead` 预测阶段与实际测量阶段，直接按当前测量约束更新安全 `unfocusedCount`、内边距与裁剪状态。
 - 不兜底超出 Compose `Constraints` 上限的极端尺寸或数值：与官方 `Modifier.height`、`PageSize.Fixed`、`IntrinsicSize` 及 `PagerState` 一致，不为极端超大 `itemSize`、无界容器下 `Int.MAX_VALUE` 级 `unfocusedCount` 或 `Int.MIN_VALUE` / `Int.MAX_VALUE` 级偏移索引差值做截断与 `Long` 防溢出兜底。
 - 不对默认焦点分割线做非常规 `thickness` 截断兜底：与官方 `HorizontalDivider` / `VerticalDivider` 一致，`WheelPickerFocusVertical` 与 `WheelPickerFocusHorizontal` 仅将 `Dp.Hairline` 绘制为 `1px` 细线并对负值不绘制，不为 `Dp.Unspecified`、`Dp.Infinity` 或超出焦点区域尺寸的 `thickness` 做额外截断、校验或公开 KDoc 说明。
 - 不在动画飞行途中按 `key` 改道：`animateScrollToIndex` 执行期间若发生数据增删重排，不中途取消并追踪旧 `key`，始终滚向调用时锁定的目标索引。
@@ -101,5 +100,5 @@ ANDROID_SERIAL=emulator-5554 ./gradlew :lib:connectedDebugAndroidTest \
 
 | 测试类 | 覆盖范围 |
 |---|---|
-| `WheelPickerTest` | 非法参数校验、有限空间下 `unfocusedCount` 自动缩小、`snappedIndex` 与视觉偏移比例计算（含 `reverseLayout` 与 RTL 组合）、挂载/卸载/空列表过渡/缩容夹紧与 `Saver`、未挂载与首次测量前预跳转、固有尺寸测量与紧约束裁剪及预测测量隔离 |
-| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束像素裁剪、`ModalBottomSheet` 嵌套滚动惯性滑动与吸附、手势打断动画与取消动画后自动归位、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与首尾缩容稳定 `key` 保持、动态扩缩容立即跳转、条件渲染卸载与空态回填恢复、重挂载跳转、条目选中无障碍语义更新 |
+| `WheelPickerTest` | 非法参数校验、有限空间下 `unfocusedCount` 自动缩小、`snappedIndex` 与视觉偏移比例计算（含 `reverseLayout` 与 RTL 组合）、挂载/卸载/空列表过渡/缩容夹紧与 `Saver`、未挂载与空数据预跳转、固有尺寸测量与紧约束裁剪 |
+| `WheelPickerInstrumentedTest` | 垂直/水平固有尺寸与紧约束像素裁剪、`ModalBottomSheet` 嵌套滚动惯性滑动与吸附、手势打断动画与取消动画后自动归位、RTL 水平滚轮视觉偏移与焦点指示器、手势非零偏移缩容夹紧与首尾缩容稳定 `key` 保持、动态扩缩容联动跳转、条件渲染卸载与空态回填恢复、重挂载跳转、条目选中无障碍语义更新 |

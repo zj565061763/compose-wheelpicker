@@ -105,7 +105,6 @@ class WheelPickerState(
     unfocusedCount: Int,
     itemSizePx: Int,
     reverseVisualDirection: Boolean = false,
-    countProvider: (() -> Int)? = null,
   ) {
     _store.updateAttachment(
       owner = owner,
@@ -113,7 +112,6 @@ class WheelPickerState(
       unfocusedCount = unfocusedCount,
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
-      countProvider = countProvider,
     )
   }
 
@@ -125,16 +123,14 @@ class WheelPickerState(
     _snapObserver.observe(owner)
   }
 
-  /** 执行跳转到[index]，未挂载、空数据或首次测量前直接记录目标而不挂起 */
+  /** 执行跳转到[index]，未挂载或空数据时直接记录目标而不挂起 */
   private suspend fun scrollToIndex(
     index: Int,
     animate: Boolean,
   ) {
-    _store.syncLiveCount()
     val currentAttachment = _store.attachment
     if (currentAttachment == null || currentAttachment.count <= 0) {
       val requestedIndex = index.coerceAtLeast(0)
-      _store.pendingTargetIndex = requestedIndex
       _store.lastKnownIndex = requestedIndex
       lazyListState.requestScrollToItem(index = requestedIndex, scrollOffset = 0)
       return
@@ -142,36 +138,12 @@ class WheelPickerState(
 
     val targetIndex = index.coerceIn(0, currentAttachment.count - 1)
     _store.lastKnownIndex = targetIndex
-
-    if (lazyListState.layoutInfo.totalItemsCount <= 0) {
-      _store.pendingTargetIndex = null
-      lazyListState.requestScrollToItem(index = targetIndex, scrollOffset = 0)
-      _store.updateSnappedIndex(targetIndex)
-      return
+    if (animate) {
+      lazyListState.animateScrollToItem(targetIndex)
+    } else {
+      lazyListState.scrollToItem(targetIndex)
     }
-
-    _store.pendingTargetIndex = targetIndex
-    var succeeded = false
-    try {
-      if (animate) {
-        lazyListState.animateScrollToItem(targetIndex)
-      } else {
-        lazyListState.scrollToItem(targetIndex)
-      }
-      succeeded = true
-    } finally {
-      val latestAttachment = _store.attachment
-      if (latestAttachment != null && latestAttachment.count > 0 && !lazyListState.isScrollInProgress) {
-        if (_store.pendingTargetIndex == targetIndex) {
-          _store.pendingTargetIndex = null
-        }
-        if (succeeded) {
-          _store.settleCurrentIndexIfAligned()
-        } else {
-          _store.updateLastKnownIndexFromLive()
-        }
-      }
-    }
+    _store.settleCurrentIndex()
   }
 
   companion object {

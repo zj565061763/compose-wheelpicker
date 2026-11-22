@@ -156,10 +156,6 @@ private fun WheelPicker(
       initialUnfocusedCount = unfocusedCount,
     )
   }
-  val resolvedUnfocusedCount = viewportState.resolveUnfocusedCount(
-    itemSizePx = itemSizePx,
-    requestedUnfocusedCount = unfocusedCount,
-  )
   val reverseVisualDirection = orientation.isVisualDirectionReversed(
     reverseLayout = reverseLayout,
     layoutDirection = layoutDirection,
@@ -170,10 +166,9 @@ private fun WheelPicker(
     state.updateAttachment(
       owner = owner,
       count = resolvedCount,
-      unfocusedCount = resolvedUnfocusedCount,
+      unfocusedCount = unfocusedCount,
       itemSizePx = itemSizePx,
       reverseVisualDirection = reverseVisualDirection,
-      countProvider = latestCountState.value,
     )
   }
 

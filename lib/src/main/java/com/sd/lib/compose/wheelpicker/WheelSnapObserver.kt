@@ -1,8 +1,8 @@
 package com.sd.lib.compose.wheelpicker
 
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -49,7 +49,7 @@ internal class WheelSnapObserver(
         wasScrolling = false
         if (snapshot.hasVisibleItems && snapshot.firstVisibleItemScrollOffset != 0) {
           // 非零偏移进入自动归位前等待一帧边界并让出调度，避免截停刚离手的惯性滚动衔接
-          currentCoroutineContext()[MonotonicFrameClock]?.withFrameNanos { }
+          withFrameNanos { }
         }
         yield()
         if (lazyListState.isScrollInProgress) {
@@ -82,7 +82,7 @@ internal class WheelSnapObserver(
         }
       }
 
-      store.onIdleSettled(owner)
+      store.settleCurrentIndex(owner)
     }
   }
 
